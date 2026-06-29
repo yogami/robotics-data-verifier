@@ -1,11 +1,13 @@
-FROM nginx:alpine
+FROM python:3.9-slim
 
-# Copy the static frontend files
-COPY index.html /usr/share/nginx/html/
-COPY style.css /usr/share/nginx/html/
-COPY app.js /usr/share/nginx/html/
-COPY quality_report.json /usr/share/nginx/html/
+WORKDIR /app
 
-# Create a template so Nginx dynamically listens on the port Railway provides ($PORT)
-RUN mkdir -p /etc/nginx/templates && \
-    echo 'server { listen ${PORT}; location / { root /usr/share/nginx/html; index index.html; } }' > /etc/nginx/templates/default.conf.template
+# Install dependencies first for Docker caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the app code and static files
+COPY . .
+
+# Run FastAPI using uvicorn. Railway provides the $PORT environment variable.
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}

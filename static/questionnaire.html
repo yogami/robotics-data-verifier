@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Discovery | Verifier Node</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { padding: 40px; }
+        .form-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 40px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        .form-group {
+            margin-bottom: 24px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #fff;
+            font-size: 0.95rem;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+            font-size: 1rem;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
+            border: none;
+            border-radius: 8px;
+            color: #1a1a1a;
+            font-weight: bold;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            opacity: 0.9;
+        }
+        .section-title {
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            color: #4facfe;
+        }
+        .success-message {
+            display: none;
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #00ff00;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header">
+        <h1>Verifier Node</h1>
+        <p class="subtitle">Robotics DePIN Data Quality Oracle</p>
+    </header>
+
+    <div class="form-container">
+        <h2>Customer Discovery Interview</h2>
+        <p style="color: #aaa; margin-bottom: 30px;">Record the responses from the target AI lab or researcher. Responses are saved directly to PostgreSQL.</p>
+        
+        <form id="discoveryForm">
+            <!-- Metadata -->
+            <div class="form-group">
+                <label>Interviewee Name</label>
+                <input type="text" id="interviewee_name" required>
+            </div>
+            <div class="form-group">
+                <label>Company / Lab</label>
+                <input type="text" id="company" required>
+            </div>
+
+            <h3 class="section-title">Phase 0: Role, Org, & Stack</h3>
+            <div class="form-group">
+                <label>1. Role and personal KPIs for next 6-12 months?</label>
+                <textarea id="q1"></textarea>
+            </div>
+            <div class="form-group">
+                <label>2. Team size and responsibilities split?</label>
+                <textarea id="q2"></textarea>
+            </div>
+            <div class="form-group">
+                <label>3. Other data modalities relied on today (sim, logs, synthetic)?</label>
+                <textarea id="q3"></textarea>
+            </div>
+
+            <h3 class="section-title">Phase 1: Contextualizing the Pipeline</h3>
+            <div class="form-group">
+                <label>4. Lifecycle of the last large batch of teleoperation data?</label>
+                <textarea id="q4"></textarea>
+            </div>
+            <div class="form-group">
+                <label>5. Workforce management for that batch (internal vs external)?</label>
+                <textarea id="q5"></textarea>
+            </div>
+            <div class="form-group">
+                <label>6. Storage footprint and specific format (HDF5, Parquet)?</label>
+                <textarea id="q6"></textarea>
+            </div>
+
+            <h3 class="section-title">Phase 2: Isolating the Anomalies</h3>
+            <div class="form-group">
+                <label>7. Last policy failure due to data side issue (what was recorded)?</label>
+                <textarea id="q7"></textarea>
+            </div>
+            <div class="form-group">
+                <label>8. Fatigue manifestation and filtering process?</label>
+                <textarea id="q8"></textarea>
+            </div>
+            <div class="form-group">
+                <label>9. Sync/timestamp drift across modalities?</label>
+                <textarea id="q9"></textarea>
+            </div>
+            <div class="form-group">
+                <label>10. Number of training reruns in last month due to data issues?</label>
+                <textarea id="q10"></textarea>
+            </div>
+
+            <h3 class="section-title">Phase 3: Economics of Trust & Workflow</h3>
+            <div class="form-group">
+                <label>11. Engineering hours spent triaging corrupted batch vs retraining?</label>
+                <textarea id="q11"></textarea>
+            </div>
+            <div class="form-group">
+                <label>12. Budget/headcount reallocated for validation tooling this quarter?</label>
+                <textarea id="q12"></textarea>
+            </div>
+            <div class="form-group">
+                <label>13. Financial/Administrative handling of bad submissions (30% latency)?</label>
+                <textarea id="q13"></textarea>
+            </div>
+            <div class="form-group">
+                <label>14. Exact point in pipeline a quality gate makes sense?</label>
+                <textarea id="q14"></textarea>
+            </div>
+
+            <h3 class="section-title">Phase 4 & 5: MVP Demo & Commitment</h3>
+            <div class="form-group">
+                <label>15. Which engineer is responsible for looking at this anomaly score?</label>
+                <textarea id="q15"></textarea>
+            </div>
+            <div class="form-group">
+                <label>16. How does automated financial penalty align with current procurement?</label>
+                <textarea id="q16"></textarea>
+            </div>
+            <div class="form-group">
+                <label>17. Commitment Status (Data share, Stakeholder intro, Local test)?</label>
+                <textarea id="q17"></textarea>
+            </div>
+
+            <button type="submit" id="submitBtn">Save to PostgreSQL</button>
+            <div class="success-message" id="successMsg">Response saved successfully!</div>
+        </form>
+    </div>
+
+    <script src="questionnaire.js"></script>
+</body>
+</html>
