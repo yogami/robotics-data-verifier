@@ -1,0 +1,22 @@
+{
+  "dataset_id": "lerobot/aloha_mobile_cabinet",
+  "audit_timestamp": "2026-06-29T11:10:49.776927+00:00",
+  "frames_analyzed": 5000,
+  "metrics": {
+    "framerate_consistency_score": 0.0,
+    "mean_timestep_sec": 0.002,
+    "std_timestep_sec": 0.7347,
+    "missing_proprioception_frames": 0,
+    "joint_limit_violations": 0,
+    "kinematic_entropy_score": 0.7454,
+    "isolation_forest_anomaly_rate": 0.01
+  },
+  "flags": [
+    "WARNING: High jitter / inconsistent framerate detected.",
+    "WARNING: Low kinematic entropy. Data may be artificially padded."
+  ],
+  "solana_attestation": {
+    "report_hash": "68b8be9067e2619a22eb157597daa0d5e9d31067d7f783a85a3cdb0192e99758",
+    "status": "PENDING_ONCHAIN_ANCHOR"
+  }
+}

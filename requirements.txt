@@ -1,0 +1,6 @@
+huggingface_hub
+datasets
+pandas
+pyarrow
+scikit-learn
+scipy

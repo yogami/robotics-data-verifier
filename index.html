@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verifier Node | Robotics DePIN</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo-area">
+                <div class="logo-icon"></div>
+                <h1>Verifier Node</h1>
+            </div>
+            <nav>
+                <a href="#" class="active">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 12px;"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    Dashboard
+                </a>
+                <a href="#">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 12px;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                    Oracles
+                </a>
+                <a href="#">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 12px;"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                    Staking
+                </a>
+                <a href="#">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 12px;"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    Settings
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header>
+                <h2>Data Quality Oracle</h2>
+                <div class="header-status">
+                    <span class="status-dot"></span>
+                    <span>Solana Devnet: Connected</span>
+                </div>
+            </header>
+
+            <!-- Upload Section -->
+            <section class="upload-section" id="uploadSection" onclick="document.getElementById('reportInput').click()">
+                <div class="upload-content">
+                    <div class="upload-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    </div>
+                    <h3>Load Quality Report</h3>
+                    <p>Select quality_report.json to verify data integrity</p>
+                    <label class="upload-btn">
+                        Browse File
+                        <input type="file" id="reportInput" accept="application/json">
+                    </label>
+                </div>
+            </section>
+
+            <!-- Dashboard Grid -->
+            <div class="dashboard-grid hidden" id="dashboardGrid">
+                
+                <!-- KPI Cards -->
+                <div class="kpi-card glassmorphism">
+                    <h3>Kinematic Entropy</h3>
+                    <div class="kpi-value" id="kpiEntropy">--</div>
+                    <p class="kpi-label">Shannon Entropy Score</p>
+                </div>
+                
+                <div class="kpi-card glassmorphism">
+                    <h3>Anomaly Rate</h3>
+                    <div class="kpi-value" id="kpiAnomaly">--</div>
+                    <p class="kpi-label">Isolation Forest ML</p>
+                </div>
+
+                <div class="kpi-card glassmorphism">
+                    <h3>Timestep Jitter</h3>
+                    <div class="kpi-value" id="kpiJitter">--</div>
+                    <p class="kpi-label">Std Dev (seconds)</p>
+                </div>
+
+                <!-- Action Card -->
+                <div class="kpi-card glassmorphism action-card" id="actionCard">
+                    <h3>DePIN Action</h3>
+                    <div class="kpi-value" id="kpiAction">--</div>
+                    <p class="kpi-label">Smart Contract Execution</p>
+                </div>
+
+                <!-- Certificate Panel -->
+                <div class="certificate-panel glassmorphism span-2">
+                    <h3>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        Cryptographic Attestation
+                    </h3>
+                    <div class="details-grid">
+                        <div class="detail-item">
+                            <span class="detail-label">Dataset ID</span>
+                            <span class="detail-value" id="valDatasetId">--</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Frames Analyzed</span>
+                            <span class="detail-value" id="valFrames">--</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Audit Timestamp (UTC)</span>
+                            <span class="detail-value" id="valTimestamp">--</span>
+                        </div>
+                    </div>
+                    
+                    <div class="hash-container">
+                        <div class="detail-label" style="margin-bottom: 8px;">SHA-256 Report Hash</div>
+                        <div class="hash-text" id="valHash">--</div>
+                    </div>
+                    
+                    <div class="status-badge" id="valStatus">--</div>
+                </div>
+
+                <!-- Logs Panel -->
+                <div class="logs-panel glassmorphism span-2">
+                    <h3>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
+                        Evaluation Logs & Flags
+                    </h3>
+                    <ul id="flagsList" class="flags-list">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
