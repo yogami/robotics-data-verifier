@@ -39,13 +39,15 @@ def test_diagnostic_demo_runs(page: Page):
     expect(terminal_content).to_contain_text("FOUND 2 CORRUPTED EPISODES", timeout=15000)
     expect(terminal_content).to_contain_text("LEADER_FOLLOWER_CALIBRATION_DRIFT", timeout=5000)
     expect(terminal_content).to_contain_text("DIFFUSION_STALL_HESITATION", timeout=5000)
+    expect(terminal_content).to_contain_text("Slack Notification: NOT_TRIGGERED", timeout=5000)
+    expect(terminal_content).to_contain_text("TCP offset", timeout=5000)
     
     # SUBSTANCE TEST: Assert that the matplotlib distribution PNG successfully renders in the DOM
     plot_img = terminal_content.locator("img[alt='Architecture-Aware Calibration Drift Plot']")
     expect(plot_img).to_be_visible()
     expect(plot_img).to_have_attribute("src", "/static/calibration_drift_plot.png")
     
-    print("✅ V3 Architecture-Aware Playwright demo tests passed successfully.")
+    print("✅ V3.2 Architecture-Aware Playwright demo tests passed successfully.")
 
 def test_diagnostic_real_runs(page: Page):
     """Verify the Real HF Dataset audit runs successfully and renders the plot."""
@@ -63,9 +65,11 @@ def test_diagnostic_real_runs(page: Page):
     expect(terminal_content).to_contain_text("lerobot/aloha_mobile_cabinet", timeout=30000)
     expect(terminal_content).to_contain_text("FOUND", timeout=30000)
     expect(terminal_content).to_contain_text("LEADER_FOLLOWER_CALIBRATION_DRIFT", timeout=5000)
+    expect(terminal_content).to_contain_text("Slack Notification: NOT_TRIGGERED", timeout=5000)
+    expect(terminal_content).to_contain_text("TCP offset", timeout=5000)
     
     plot_img = terminal_content.locator("img[alt='Architecture-Aware Calibration Drift Plot']")
     expect(plot_img).to_be_visible()
     expect(plot_img).to_have_attribute("src", "/static/real_calibration_drift_plot.png")
     
-    print("✅ V3 Architecture-Aware Playwright real dataset tests passed successfully.")
+    print("✅ V3.2 Architecture-Aware Playwright real dataset tests passed successfully.")

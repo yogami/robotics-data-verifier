@@ -188,6 +188,14 @@
                 Choose between running the V3 Quality Gate on simulated bimanual teleop streams, or fetching and auditing actual open-source dataset episodes directly from the Hugging Face hub.
             </p>
             
+            <!-- Slack Integration -->
+            <div style="margin-bottom: 1.5rem;">
+                <label for="webhookUrl" style="display: block; margin-bottom: 0.5rem; font-size: 0.85rem; color: var(--text-secondary); font-weight: 500;">
+                    Slack Webhook URL (Optional - Test Live Incident Notifications):
+                </label>
+                <input type="text" id="webhookUrl" placeholder="https://hooks.slack.com/services/..." style="width: 100%; box-sizing: border-box; padding: 0.75rem; background: #020617; border: 1px solid #1e293b; border-radius: 8px; color: white; font-family: 'Fira Code', monospace; font-size: 0.85rem;">
+            </div>
+            
             <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
                 <button id="runBtnDemo" class="btn" onclick="runDiagnostic('/api/diagnostic-demo', 'runBtnDemo')">
                     <span>1. Run Simulated ALOHA Demo</span>
@@ -221,6 +229,9 @@
             
             const otherBtnId = btnId === 'runBtnDemo' ? 'runBtnReal' : 'runBtnDemo';
             const otherBtn = document.getElementById(otherBtnId);
+            
+            const webhookUrl = document.getElementById('webhookUrl').value.trim();
+            const finalEndpoint = webhookUrl ? `${endpoint}?slack_webhook=${encodeURIComponent(webhookUrl)}` : endpoint;
 
             // UI Loading state
             btn.disabled = true;
@@ -234,7 +245,7 @@
             `;
 
             try {
-                const response = await fetch(endpoint);
+                const response = await fetch(finalEndpoint);
                 const data = await response.json();
 
                 if (data.status === "success") {
@@ -259,6 +270,7 @@
                 <div class="line"><br></div>
                 <div class="line"><strong>Dataset:</strong> ${report.dataset}</div>
                 <div class="line"><strong>Episodes Analyzed:</strong> ${report.total_episodes_analyzed}</div>
+                <div class="line"><strong>Slack Notification:</strong> <span style="color: #fbbf24; font-weight: bold;">${report.slack_alert_status || 'NOT_TRIGGERED'}</span></div>
             `;
 
             if (report.failed_episodes.length === 0) {

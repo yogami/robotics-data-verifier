@@ -3,18 +3,48 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import seaborn as sns
 import os
+import urllib.request
+import json
+from kinematics import BimanualForwardKinematics
 
 class ArchitectureAwareDriftGate:
     """
-    V3 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
+    V3.2 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
     Bypasses HDF5/Parquet interpolation entirely.
     """
-    def __init__(self, episodes=None):
+    def __init__(self, episodes=None, slack_webhook=None):
         self.episodes = episodes
-        self.calibration_threshold = 0.087 # ~5 degrees (converted to radians)
+        self.slack_webhook = slack_webhook
+        self.calibration_threshold = 0.087 # ~5 degrees
         self.reversal_threshold = 70 # High number of micro-corrections
+        self.tcp_threshold_m = 0.006 # 6.0 mm (from LeRobot Issue #3758)
+        self.fk_solver = BimanualForwardKinematics()
+
+    def compute_cartesian_drift(self, leader_pos, follower_pos, stable_mask):
+        """
+        Calculates the maximum Cartesian (TCP) workspace drift in meters.
+        """
+        if not np.any(stable_mask):
+            return 0.0
+            
+        stable_leader = leader_pos[stable_mask]
+        stable_follower = follower_pos[stable_mask]
+        
+        max_tcp_drift = 0.0
+        
+        # Calculate FK for each stable frame
+        for l_joint, f_joint in zip(stable_leader, stable_follower):
+            l_left, l_right = self.fk_solver.solve_bimanual_fk(l_joint)
+            f_left, f_right = self.fk_solver.solve_bimanual_fk(f_joint)
+            
+            # Spatial drift is the Euclidean distance between leader (target) and follower
+            drift_left = np.linalg.norm(l_left - f_left)
+            drift_right = np.linalg.norm(l_right - f_right)
+            
+            max_tcp_drift = max(max_tcp_drift, drift_left, drift_right)
+            
+        return max_tcp_drift
         
     def compute_leader_follower_drift(self, leader_pos, follower_pos):
         """
@@ -53,6 +83,36 @@ class ArchitectureAwareDriftGate:
         max_reversals = np.max(reversals_per_joint)
         return int(max_reversals)
 
+    def send_slack_alert(self, message):
+        """
+        Dispatches alert details to Slack Webhook URL.
+        """
+        if not self.slack_webhook:
+            return "NO_WEBHOOK_CONFIGURED"
+            
+        try:
+            payload = {
+                "text": "🚨 *Robotics Data Verifier Gate: Critical Trajectory Failure Detected* 🚨",
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"🚨 *Critical Data Quality Event*\n{message}"
+                        }
+                    }
+                ]
+            }
+            req = urllib.request.Request(
+                self.slack_webhook,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            with urllib.request.urlopen(req) as response:
+                return f"SUCCESS (Status: {response.status})"
+        except Exception as e:
+            return f"ERROR: {str(e)}"
+
     def analyze(self):
         print("Analyzing simulated LeRobot real-time buffer...")
         failed_episodes = []
@@ -62,16 +122,16 @@ class ArchitectureAwareDriftGate:
             leader_pos = ep["leader_qpos"]
             follower_pos = ep["follower_qpos"]
             
-            drift, _ = self.compute_leader_follower_drift(leader_pos, follower_pos)
+            joint_drift, stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos)
+            tcp_drift = self.compute_cartesian_drift(leader_pos, follower_pos, stable_mask)
             
-            # Simulated threshold check (17 degrees is ~0.3 radians)
-            if drift > 0.15: # ~8.5 degrees
+            if joint_drift > 0.15 or tcp_drift > self.tcp_threshold_m: # ~8.5 degrees or 6mm
                 failed_episodes.append({
                     "episode": ep_id,
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(drift):.2f}° offset",
-                    "reason": "Hardware calibration offset detected. Policy will learn a permanently biased mapping (Issue #3758)."
+                    "metric": f"{np.degrees(joint_drift):.2f}° joint, {tcp_drift * 1000:.1f}mm TCP offset",
+                    "reason": f"Hardware calibration offset detected. TCP spatial displacement is {tcp_drift * 1000:.1f}mm, violating the {self.tcp_threshold_m * 1000:.1f}mm limit."
                 })
                 continue
                 
@@ -85,6 +145,13 @@ class ArchitectureAwareDriftGate:
                     "reason": "Smooth stalling/hesitation detected. Continuous models (Diffusion/ACT) will fail to generalize."
                 })
                 continue
+
+        # Slack integration trigger for the first failure
+        slack_status = "NOT_TRIGGERED"
+        if failed_episodes and self.slack_webhook:
+            fail = failed_episodes[0]
+            alert_msg = f"*Dataset:* simulated LeRobot buffer\n*Episode:* {fail['episode']}\n*Error:* {fail['error_type']} ({fail['severity']})\n*Metric:* {fail['metric']}\n*Reason:* {fail['reason']}"
+            slack_status = self.send_slack_alert(alert_msg)
 
         plt.figure(figsize=(10, 6))
         corrupted_ep = next((e for e in self.episodes if e["episode_id"] == "episode_14"), None)
@@ -114,6 +181,7 @@ class ArchitectureAwareDriftGate:
             "total_episodes_analyzed": len(self.episodes),
             "failed_episodes": failed_episodes,
             "estimated_compute_waste_saved_usd": 25000,
+            "slack_alert_status": slack_status,
             "message": "Architecture-Aware Drift Gate completed.",
             "plot_url": "/static/calibration_drift_plot.png"
         }
@@ -125,9 +193,7 @@ class ArchitectureAwareDriftGate:
         unique_episodes = sorted(df["episode_index"].unique())
         failed_episodes = []
         
-        # We will analyze the first 15 episodes to keep it fast and responsive
         episodes_to_analyze = unique_episodes[:15]
-        
         episode_drifts = {}
         
         for ep_idx in episodes_to_analyze:
@@ -136,16 +202,18 @@ class ArchitectureAwareDriftGate:
             states = np.vstack(ep_data["observation.state"].values)
             actions = np.vstack(ep_data["action"].values)
             
-            drift, stable_mask = self.compute_leader_follower_drift(actions, states)
-            episode_drifts[ep_idx] = (actions, states, stable_mask, drift)
+            joint_drift, stable_mask = self.compute_leader_follower_drift(actions, states)
+            tcp_drift = self.compute_cartesian_drift(actions, states, stable_mask)
+            episode_drifts[ep_idx] = (actions, states, stable_mask, joint_drift)
             
-            if drift > self.calibration_threshold:
+            # Threshold evaluation for joint-space AND Cartesian TCP space
+            if joint_drift > self.calibration_threshold or tcp_drift > self.tcp_threshold_m:
                 failed_episodes.append({
                     "episode": f"episode_{ep_idx}",
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(drift):.2f}° offset",
-                    "reason": f"Real hardware offset detected on stable frames. Exceeds standard {np.degrees(self.calibration_threshold):.1f}° tolerance."
+                    "metric": f"{np.degrees(joint_drift):.2f}° joint, {tcp_drift * 1000:.1f}mm TCP offset",
+                    "reason": f"Real hardware offset detected on stable frames. TCP workspace displacement of {tcp_drift * 1000:.1f}mm violates the {self.tcp_threshold_m * 1000:.1f}mm limit (Issue #3758)."
                 })
                 continue
                 
@@ -159,26 +227,27 @@ class ArchitectureAwareDriftGate:
                     "reason": "High direction reversal rate detected. Indicates human operator jitter or physical teleop hesitation."
                 })
 
-        # Generate Plot for Real Data (Episode 9 [High Drift] vs Episode 5 [Low Drift])
+        # Slack integration trigger for the first failure
+        slack_status = "NOT_TRIGGERED"
+        if failed_episodes and self.slack_webhook:
+            fail = failed_episodes[0]
+            alert_msg = f"*Dataset:* lerobot/aloha_mobile_cabinet (HF Hub)\n*Episode:* {fail['episode']}\n*Error:* {fail['error_type']} ({fail['severity']})\n*Metric:* {fail['metric']}\n*Reason:* {fail['reason']}"
+            slack_status = self.send_slack_alert(alert_msg)
+
         plt.figure(figsize=(10, 6))
-        
-        ep_high = episode_drifts.get(9) # Episode 9 has ~6.7 degrees drift
-        ep_low = episode_drifts.get(5)  # Episode 5 has ~2.39 degrees drift
+        ep_high = episode_drifts.get(9) # Episode 9 has high drift
+        ep_low = episode_drifts.get(5)  # Episode 5 has lower drift
         
         if ep_low and ep_high:
-            # For plotting, let's take the joint with the maximum offset
-            # Calculate drift per joint for ep_high
             stable_mask_high = ep_high[2]
             stable_a_high = ep_high[0][stable_mask_high]
             stable_s_high = ep_high[1][stable_mask_high]
             joint_drifts = np.mean(np.abs(stable_a_high - stable_s_high), axis=0)
             max_joint_idx = np.argmax(joint_drifts)
             
-            # Plot the joint delta over all stable timesteps for Episode 9
             drift_over_time_high = np.abs(ep_high[0][:, max_joint_idx] - ep_high[1][:, max_joint_idx])
             plt.plot(np.degrees(drift_over_time_high), label=f'Real Episode 9 (Max Joint {max_joint_idx} Offset)', color='#f43f5e', linewidth=2)
             
-            # Plot for Episode 5
             drift_over_time_low = np.abs(ep_low[0][:, max_joint_idx] - ep_low[1][:, max_joint_idx])
             plt.plot(np.degrees(drift_over_time_low), label=f'Real Episode 5 (Max Joint {max_joint_idx} Offset)', color='#10b981', linewidth=2)
 
@@ -198,6 +267,7 @@ class ArchitectureAwareDriftGate:
             "total_episodes_analyzed": len(episodes_to_analyze),
             "failed_episodes": failed_episodes,
             "estimated_compute_waste_saved_usd": 42000,
+            "slack_alert_status": slack_status,
             "message": "Real LeRobot dataset audit complete. Found actual hardware calibration drifts in official Hugging Face repository.",
             "plot_url": "/static/real_calibration_drift_plot.png"
         }

@@ -63,7 +63,7 @@ from generate_lerobot_buffer import create_lerobot_buffer_mock
 from lerobot_buffer_hook import ArchitectureAwareDriftGate
 
 @app.get("/api/diagnostic-demo")
-async def run_diagnostic_demo():
+async def run_diagnostic_demo(slack_webhook: str = None):
     """
     V3 Endpoint: Simulates a real-time lerobot-record buffer hook.
     """
@@ -72,7 +72,7 @@ async def run_diagnostic_demo():
         episodes = create_lerobot_buffer_mock()
         
         # Step 2: Run the Architecture-Aware Drift Gate on the buffer
-        gate = ArchitectureAwareDriftGate(episodes)
+        gate = ArchitectureAwareDriftGate(episodes, slack_webhook=slack_webhook)
         report = gate.analyze()
         
         return {"status": "success", "report": report}
@@ -81,7 +81,7 @@ async def run_diagnostic_demo():
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/diagnostic-real")
-async def run_diagnostic_real():
+async def run_diagnostic_real(slack_webhook: str = None):
     """
     Downloads chunk-000 from HF lerobot/aloha_mobile_cabinet and runs the quality gate on real robot teleop.
     """
@@ -96,7 +96,7 @@ async def run_diagnostic_real():
             urllib.request.urlretrieve(parquet_url, local_path)
             print("Download complete.")
             
-        gate = ArchitectureAwareDriftGate()
+        gate = ArchitectureAwareDriftGate(slack_webhook=slack_webhook)
         report = gate.analyze_real_parquet(local_path)
         
         return {"status": "success", "report": report}
