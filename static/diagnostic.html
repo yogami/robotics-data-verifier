@@ -185,14 +185,20 @@
 
         <div class="card">
             <p style="margin-top: 0; margin-bottom: 1.5rem; color: var(--text-secondary); line-height: 1.6;">
-                This demo initializes a synthetic HDF5 teleoperation dataset (50 episodes). 
-                The pipeline will compute exact timestamp deltas between camera and joint states, and evaluate the 3rd derivative of position (jerk) to flag operator fatigue.
+                Choose between running the V3 Quality Gate on simulated bimanual teleop streams, or fetching and auditing actual open-source dataset episodes directly from the Hugging Face hub.
             </p>
             
-            <button id="runBtn" class="btn" onclick="runDiagnostic()">
-                <span>Run Diagnostic Audit on ALOHA Sample</span>
-                <div id="spinner" class="spinner"></div>
-            </button>
+            <div style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+                <button id="runBtnDemo" class="btn" onclick="runDiagnostic('/api/diagnostic-demo', 'runBtnDemo')">
+                    <span>1. Run Simulated ALOHA Demo</span>
+                    <div id="spinnerDemo" class="spinner"></div>
+                </button>
+                
+                <button id="runBtnReal" class="btn" style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.39);" onclick="runDiagnostic('/api/diagnostic-real', 'runBtnReal')">
+                    <span>2. Audit Real HF Dataset</span>
+                    <div id="spinnerReal" class="spinner"></div>
+                </button>
+            </div>
 
             <div id="terminal" class="terminal">
                 <div class="terminal-header">
@@ -206,35 +212,41 @@
     </div>
 
     <script>
-        async function runDiagnostic() {
-            const btn = document.getElementById('runBtn');
-            const spinner = document.getElementById('spinner');
+        async function runDiagnostic(endpoint, btnId) {
+            const btn = document.getElementById(btnId);
+            const spinnerId = btnId === 'runBtnDemo' ? 'spinnerDemo' : 'spinnerReal';
+            const spinner = document.getElementById(spinnerId);
             const terminal = document.getElementById('terminal');
             const content = document.getElementById('terminal-content');
+            
+            const otherBtnId = btnId === 'runBtnDemo' ? 'runBtnReal' : 'runBtnDemo';
+            const otherBtn = document.getElementById(otherBtnId);
 
             // UI Loading state
             btn.disabled = true;
+            otherBtn.disabled = true;
             spinner.style.display = 'block';
             terminal.style.display = 'block';
             content.innerHTML = `
                 <div class="line text-secondary">> Initializing diagnostic pipeline...</div>
-                <div class="line text-secondary">> Fetching dataset metadata...</div>
-                <div class="line text-secondary">> Calculating kinematic derivatives and timestamp deltas...</div>
+                <div class="line text-secondary">> Connecting to Hugging Face dataset buffer (if running real audit)...</div>
+                <div class="line text-secondary">> Calculating velocity-gated joint deltas and action mappings...</div>
             `;
 
             try {
-                const response = await fetch('/api/diagnostic-demo');
+                const response = await fetch(endpoint);
                 const data = await response.json();
 
                 if (data.status === "success") {
                     renderReport(data.report);
                 } else {
-                    content.innerHTML += `<div class="line text-danger">> Error: Failed to execute pipeline.</div>`;
+                    content.innerHTML += `<div class="line text-danger">> Error: Failed to execute pipeline. ${data.message}</div>`;
                 }
             } catch (error) {
                 content.innerHTML += `<div class="line text-danger">> Error: Connection to backend failed.</div>`;
             } finally {
                 btn.disabled = false;
+                otherBtn.disabled = false;
                 spinner.style.display = 'none';
             }
         }

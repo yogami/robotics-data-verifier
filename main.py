@@ -79,3 +79,27 @@ async def run_diagnostic_demo():
         
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+@app.get("/api/diagnostic-real")
+async def run_diagnostic_real():
+    """
+    Downloads chunk-000 from HF lerobot/aloha_mobile_cabinet and runs the quality gate on real robot teleop.
+    """
+    try:
+        parquet_url = "https://huggingface.co/datasets/lerobot/aloha_mobile_cabinet/resolve/main/data/chunk-000/file-000.parquet"
+        local_path = "static/aloha_mobile_cabinet.parquet"
+        
+        # Cache the dataset locally so subsequent clicks are instantaneous
+        if not os.path.exists(local_path):
+            import urllib.request
+            print(f"Downloading {parquet_url}...")
+            urllib.request.urlretrieve(parquet_url, local_path)
+            print("Download complete.")
+            
+        gate = ArchitectureAwareDriftGate()
+        report = gate.analyze_real_parquet(local_path)
+        
+        return {"status": "success", "report": report}
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

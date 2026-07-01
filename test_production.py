@@ -27,12 +27,12 @@ def test_diagnostic_demo_runs(page: Page):
     # Verify we are on the diagnostic page
     expect(page.locator("h1")).to_contain_text("Data Quality Gate")
     
-    # Click the Run button
-    run_btn = page.locator("button#runBtn")
+    # Click the Run button for the demo
+    run_btn = page.locator("button#runBtnDemo")
     expect(run_btn).to_be_visible()
     run_btn.click()
     
-    # Wait for the backend to process the raw HDF5 math and generate the matplotlib plot.
+    # Wait for the backend to process
     terminal_content = page.locator("#terminal-content")
     
     # We expect to see the successful JSON response message showing 2 corrupted episodes
@@ -40,9 +40,32 @@ def test_diagnostic_demo_runs(page: Page):
     expect(terminal_content).to_contain_text("LEADER_FOLLOWER_CALIBRATION_DRIFT", timeout=5000)
     expect(terminal_content).to_contain_text("DIFFUSION_STALL_HESITATION", timeout=5000)
     
-    # SUBSTANCE TEST: Assert that the Deep-Tech matplotlib distribution PNG successfully renders in the DOM
+    # SUBSTANCE TEST: Assert that the matplotlib distribution PNG successfully renders in the DOM
     plot_img = terminal_content.locator("img[alt='Architecture-Aware Calibration Drift Plot']")
     expect(plot_img).to_be_visible()
     expect(plot_img).to_have_attribute("src", "/static/calibration_drift_plot.png")
     
-    print("✅ V3 Architecture-Aware Playwright substance tests passed successfully.")
+    print("✅ V3 Architecture-Aware Playwright demo tests passed successfully.")
+
+def test_diagnostic_real_runs(page: Page):
+    """Verify the Real HF Dataset audit runs successfully and renders the plot."""
+    page.goto(f"{BASE_URL}/diagnostic")
+    
+    # Click the Run button for real audit
+    run_btn = page.locator("button#runBtnReal")
+    expect(run_btn).to_be_visible()
+    run_btn.click()
+    
+    terminal_content = page.locator("#terminal-content")
+    
+    # We expect to see that it processed real data.
+    # In chunk-000, we check the first 15 episodes. Episode 9 has 6.73 degrees drift.
+    expect(terminal_content).to_contain_text("lerobot/aloha_mobile_cabinet", timeout=30000)
+    expect(terminal_content).to_contain_text("FOUND", timeout=30000)
+    expect(terminal_content).to_contain_text("LEADER_FOLLOWER_CALIBRATION_DRIFT", timeout=5000)
+    
+    plot_img = terminal_content.locator("img[alt='Architecture-Aware Calibration Drift Plot']")
+    expect(plot_img).to_be_visible()
+    expect(plot_img).to_have_attribute("src", "/static/real_calibration_drift_plot.png")
+    
+    print("✅ V3 Architecture-Aware Playwright real dataset tests passed successfully.")
