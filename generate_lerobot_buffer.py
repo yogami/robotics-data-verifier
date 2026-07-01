@@ -13,7 +13,7 @@ def create_lerobot_buffer_mock():
     
     num_episodes = 50
     frames_per_episode = 300 # 6 seconds at 50Hz
-    num_joints = 6 # e.g. ALOHA ViperX arm
+    num_joints = 14 # 2 arms * 7 joints each (ALOHA bimanual setup)
     
     # 17 degrees in radians
     calibration_drift_rad = 17.0 * (np.pi / 180.0)

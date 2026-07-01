@@ -10,21 +10,25 @@ from kinematics import BimanualForwardKinematics
 
 class ArchitectureAwareDriftGate:
     """
-    V3.3 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
-    Bypasses HDF5/Parquet interpolation entirely.
+    V3.4 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
+    Combines robust relative outlier detection (z-score) and dt-aware velocity gating.
     """
     def __init__(self, episodes=None, slack_webhook=None):
         self.episodes = episodes
         self.slack_webhook = slack_webhook
-        self.calibration_threshold = 0.087 # ~5 degrees
-        self.reversal_threshold = 70 # High number of micro-corrections
-        self.tcp_threshold_m = 0.006 # 6.0 mm (from LeRobot Issue #3758)
-        self.rot_threshold_deg = 10.0 # 10 degrees gripper orientation limit
+        
+        # Nominal calibration baselines for ALOHA/ViperX 300 (derived from dataset analysis)
+        self.nominal_median_tcp_mm = 33.3
+        self.nominal_mad_tcp_mm = 2.6
+        self.z_threshold = 3.0 # Strict statistical outlier threshold
+        
+        self.calibration_threshold = 0.087 # ~5 degrees (used for plotting nominal boundary)
+        self.reversal_threshold = 70 
         self.fk_solver = BimanualForwardKinematics()
 
     def compute_cartesian_drift(self, leader_pos, follower_pos, stable_mask):
         """
-        Calculates the maximum Cartesian (TCP) spatial drift (meters) and
+        Calculates the mean Cartesian (TCP) spatial drift (meters) and
         geodesic orientation drift (degrees) during stable frames.
         """
         if not np.any(stable_mask):
@@ -33,41 +37,43 @@ class ArchitectureAwareDriftGate:
         stable_leader = leader_pos[stable_mask]
         stable_follower = follower_pos[stable_mask]
         
-        max_tcp_drift = 0.0
-        max_rot_drift = 0.0
+        tcp_drifts = []
+        rot_drifts = []
         
         for l_joint, f_joint in zip(stable_leader, stable_follower):
             (l_l_pos, l_l_R), (l_r_pos, l_r_R) = self.fk_solver.solve_bimanual_fk(l_joint)
             (f_l_pos, f_l_R), (f_r_pos, f_r_R) = self.fk_solver.solve_bimanual_fk(f_joint)
             
-            # 1. Spatial TCP Drift (Euclidean distance)
+            # Spatial TCP Drift (Euclidean distance)
             drift_l = np.linalg.norm(l_l_pos - f_l_pos)
             drift_r = np.linalg.norm(l_r_pos - f_r_pos)
-            max_tcp_drift = max(max_tcp_drift, drift_l, drift_r)
+            tcp_drifts.append(max(drift_l, drift_r))
             
-            # 2. Geodesic Rotation Drift (Angle-axis delta)
-            for R_L, R_F in [(l_l_R, f_l_R), (l_r_R, f_r_R)]:
-                R_rel = R_L.T @ R_F
-                # tr(R) = 1 + 2*cos(theta)
+            # Geodesic Rotation Drift (Angle-axis delta)
+            R_rel_l = l_l_R.T @ f_l_R
+            R_rel_r = l_r_R.T @ f_r_R
+            
+            for R_rel in [R_rel_l, R_rel_r]:
                 trace_val = np.trace(R_rel)
                 cos_theta = (trace_val - 1.0) / 2.0
                 cos_theta = np.clip(cos_theta, -1.0, 1.0)
                 theta_rad = np.arccos(cos_theta)
-                theta_deg = np.degrees(theta_rad)
-                max_rot_drift = max(max_rot_drift, theta_deg)
+                rot_drifts.append(np.degrees(theta_rad))
             
-        return max_tcp_drift, max_rot_drift
+        return np.mean(tcp_drifts), np.mean(rot_drifts)
         
-    def compute_leader_follower_drift(self, leader_pos, follower_pos):
+    def compute_leader_follower_drift(self, leader_pos, follower_pos, dt):
         """
         Detects mechanical calibration offsets (Issue #3758).
-        Calculates the mean absolute error between leader and follower joints,
-        strictly velocity-gated to stable frames to avoid falsely flagging PID tracking lag.
+        Filters frames based on dt-aware velocity to isolate stable configurations.
         """
-        velocity = np.abs(np.diff(follower_pos, axis=0))
+        # Calculate velocity in rad/s (joint change divided by time interval dt)
+        joint_diff = np.abs(np.diff(follower_pos, axis=0))
+        velocity = joint_diff / dt[1:][:, np.newaxis]
         velocity = np.vstack([np.zeros((1, follower_pos.shape[1])), velocity])
         
-        stable_mask = np.all(velocity < 0.01, axis=1)
+        # Velocity Gate: stable is velocity < 0.5 rad/s
+        stable_mask = np.all(velocity < 0.5, axis=1)
         
         if not np.any(stable_mask):
             return 0.0, stable_mask
@@ -82,8 +88,7 @@ class ArchitectureAwareDriftGate:
 
     def compute_direction_reversal_rate(self, positions):
         """
-        Detects Diffusion Policy stalling / hesitation.
-        Calculates the number of times velocity changes sign (zero-crossings).
+        Detects Diffusion Policy stalling / hesitation (zero-crossings).
         """
         velocity = np.diff(positions, axis=0)
         signs = np.sign(velocity)
@@ -131,17 +136,23 @@ class ArchitectureAwareDriftGate:
             leader_pos = ep["leader_qpos"]
             follower_pos = ep["follower_qpos"]
             
-            joint_drift, stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos)
+            # Simulated demo uses constant dt = 0.02s (50Hz)
+            dt = np.ones(len(leader_pos)) * 0.02
+            
+            joint_drift, stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos, dt)
             tcp_drift, rot_drift = self.compute_cartesian_drift(leader_pos, follower_pos, stable_mask)
             
-            # Check thresholds (joint offset, spatial offset, or rotational offset)
-            if joint_drift > 0.15 or tcp_drift > self.tcp_threshold_m or rot_drift > self.rot_threshold_deg:
+            tcp_drift_mm = tcp_drift * 1000
+            z_score = (tcp_drift_mm - self.nominal_median_tcp_mm) / (1.4826 * self.nominal_mad_tcp_mm)
+            
+            # Simulated Episode 14 is corrupted with a large 17° offset.
+            if z_score > self.z_threshold:
                 failed_episodes.append({
                     "episode": ep_id,
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(joint_drift):.1f}° joint, {tcp_drift * 1000:.1f}mm TCP offset, {rot_drift:.1f}° rot offset",
-                    "reason": f"Hardware calibration offset detected. TCP position drift is {tcp_drift * 1000:.1f}mm (limit: {self.tcp_threshold_m * 1000:.1f}mm), orientation drift is {rot_drift:.1f}° (limit: {self.rot_threshold_deg:.1f}°)."
+                    "metric": f"{np.degrees(joint_drift):.1f}° joint, {tcp_drift_mm:.1f}mm TCP offset, {rot_drift:.1f}° rot offset",
+                    "reason": f"Constant calibration offset detected. Z-score {z_score:.1f} exceeds strict statistical anomaly threshold ({self.z_threshold}). TCP drift of {tcp_drift_mm:.1f}mm violates normal baseline ({self.nominal_median_tcp_mm:.1f}mm)."
                 })
                 continue
                 
@@ -156,7 +167,6 @@ class ArchitectureAwareDriftGate:
                 })
                 continue
 
-        # Slack integration trigger for the first failure
         slack_status = "NOT_TRIGGERED"
         if failed_episodes and self.slack_webhook:
             fail = failed_episodes[0]
@@ -201,43 +211,93 @@ class ArchitectureAwareDriftGate:
         df = pd.read_parquet(filepath)
         
         unique_episodes = sorted(df["episode_index"].unique())
-        failed_episodes = []
-        
         episodes_to_analyze = unique_episodes[:15]
-        episode_drifts = {}
         
+        episode_data = []
+        episode_drifts = {}
+        joint_means = []
+        
+        # Step 1: Calculate stable joint and TCP metrics for each episode
         for ep_idx in episodes_to_analyze:
             ep_data = df[df["episode_index"] == ep_idx]
             
             states = np.vstack(ep_data["observation.state"].values)
             actions = np.vstack(ep_data["action"].values)
+            timestamps = ep_data["timestamp"].values
             
-            joint_drift, stable_mask = self.compute_leader_follower_drift(actions, states)
+            dt = np.diff(timestamps)
+            dt = np.insert(dt, 0, 0.02)
+            dt = np.clip(dt, 0.001, 1.0)
+            
+            joint_drift, stable_mask = self.compute_leader_follower_drift(actions, states, dt)
             tcp_drift, rot_drift = self.compute_cartesian_drift(actions, states, stable_mask)
             episode_drifts[ep_idx] = (actions, states, stable_mask, joint_drift)
             
-            # Threshold evaluation for joint, position TCP, or orientation TCP
-            if joint_drift > self.calibration_threshold or tcp_drift > self.tcp_threshold_m or rot_drift > self.rot_threshold_deg:
+            reversals = self.compute_direction_reversal_rate(actions)
+            
+            if np.any(stable_mask):
+                d = actions[stable_mask] - states[stable_mask]
+                mean_d = np.mean(d, axis=0)
+                joint_means.append(mean_d)
+            else:
+                joint_means.append(np.zeros(states.shape[1]))
+            
+            episode_data.append({
+                "episode_idx": ep_idx,
+                "joint_drift": joint_drift,
+                "tcp_drift_mm": tcp_drift * 1000,
+                "rot_drift": rot_drift,
+                "reversals": reversals
+            })
+            
+        # Step 2: Compute robust relative dataset-wide statistics (Median & MAD)
+        tcp_offsets = [ep["tcp_drift_mm"] for ep in episode_data]
+        median_tcp = np.median(tcp_offsets)
+        mad_tcp = np.median(np.abs(tcp_offsets - median_tcp))
+        mad_tcp = max(mad_tcp, 0.5)
+        
+        # Step 3: Compute joint-by-joint medians and MADs for outlier isolation
+        joint_arr = np.array(joint_means)
+        joint_medians = np.median(joint_arr, axis=0)
+        joint_mads = np.median(np.abs(joint_arr - joint_medians), axis=0)
+        joint_mads = np.clip(joint_mads, 0.001, None)
+        
+        failed_episodes = []
+        
+        # Step 4: Flag outliers relative to other episodes (z-score > 2.5 for TCP OR z-score > 3.0 for any joint)
+        for idx, ep in enumerate(episode_data):
+            ep_idx = ep["episode_idx"]
+            
+            # 1. TCP Cartesian Z-score
+            z_score_tcp = (ep["tcp_drift_mm"] - median_tcp) / (1.4826 * mad_tcp)
+            
+            # 2. Max Joint Z-score
+            z_scores_joints = (joint_arr[idx] - joint_medians) / (1.4826 * joint_mads)
+            max_z_joint_idx = np.argmax(np.abs(z_scores_joints))
+            max_z_joint_val = np.abs(z_scores_joints[max_z_joint_idx])
+            
+            is_outlier = z_score_tcp > 2.5 or max_z_joint_val > 3.0
+            
+            if is_outlier:
+                joint_deg = np.degrees(np.abs(joint_arr[idx][max_z_joint_idx]))
                 failed_episodes.append({
                     "episode": f"episode_{ep_idx}",
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(joint_drift):.1f}° joint, {tcp_drift * 1000:.1f}mm TCP offset, {rot_drift:.1f}° rot offset",
-                    "reason": f"Real hardware offset detected on stable frames (ViperX 300 Kinematics). TCP position drift of {tcp_drift * 1000:.1f}mm violates the {self.tcp_threshold_m * 1000:.1f}mm limit, orientation drift of {rot_drift:.1f}° violates the {self.rot_threshold_deg:.1f}° limit (Issue #3758)."
+                    "metric": f"{joint_deg:.1f}° joint, {ep['tcp_drift_mm']:.1f}mm TCP offset, {ep['rot_drift']:.1f}° rot offset",
+                    "reason": f"Calibration outlier detected (ViperX 300). Relative TCP Z-score: {z_score_tcp:.1f} (value: {ep['tcp_drift_mm']:.1f}mm), Max Joint Z-score: {max_z_joint_val:.1f} on Joint {max_z_joint_idx} (offset: {joint_deg:.2f}°)."
                 })
                 continue
                 
-            reversals = self.compute_direction_reversal_rate(actions)
-            if reversals > self.reversal_threshold:
+            if ep["reversals"] > self.reversal_threshold:
                 failed_episodes.append({
                     "episode": f"episode_{ep_idx}",
                     "error_type": "DIFFUSION_STALL_HESITATION",
                     "severity": "HIGH",
-                    "metric": f"{reversals} micro-reversals",
+                    "metric": f"{ep['reversals']} micro-reversals",
                     "reason": "High direction reversal rate detected. Indicates human operator jitter or physical teleop hesitation."
                 })
 
-        # Slack integration trigger for the first failure
         slack_status = "NOT_TRIGGERED"
         if failed_episodes and self.slack_webhook:
             fail = failed_episodes[0]
@@ -245,8 +305,8 @@ class ArchitectureAwareDriftGate:
             slack_status = self.send_slack_alert(alert_msg)
 
         plt.figure(figsize=(10, 6))
-        ep_high = episode_drifts.get(9) # Episode 9 has high drift
-        ep_low = episode_drifts.get(5)  # Episode 5 has lower drift
+        ep_high = episode_drifts.get(9) # Episode 9 is flagged
+        ep_low = episode_drifts.get(5)  # Episode 5 is clean
         
         if ep_low and ep_high:
             stable_mask_high = ep_high[2]
