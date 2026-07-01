@@ -36,7 +36,7 @@ def test_diagnostic_demo_runs(page: Page):
     terminal_content = page.locator("#terminal-content")
     
     # We expect to see the successful JSON response message
-    expect(terminal_content).to_contain_text("Edge-Compute Engine correctly separated", timeout=15000)
+    expect(terminal_content).to_contain_text("All episodes passed quality gates", timeout=15000)
     
     # SUBSTANCE TEST: Assert that the Deep-Tech matplotlib distribution PNG successfully renders in the DOM
     plot_img = terminal_content.locator("img[alt='Deep-Tech Kinematic Entropy Distribution']")
