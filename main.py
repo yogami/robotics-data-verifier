@@ -59,19 +59,23 @@ def serve_questionnaire():
 def serve_diagnostic():
     return RedirectResponse(url="/static/diagnostic.html")
 
-from generate_robomimic_mock import create_robomimic_mock
-from quality_gate_raw import EdgeComputeQualityGate
+from generate_lerobot_buffer import create_lerobot_buffer_mock
+from lerobot_buffer_hook import ArchitectureAwareDriftGate
 
 @app.get("/api/diagnostic-demo")
-def run_diagnostic_demo():
-    """Runs the Data Quality Gate on a raw Robomimic HDF5 dataset and returns the report & plot."""
-    dataset_file = "static/robomimic_mh_raw.hdf5"
-    
-    # Generate the dataset if it doesn't exist in the container
-    if not os.path.exists(dataset_file):
-        create_robomimic_mock(dataset_file)
+async def run_diagnostic_demo():
+    """
+    V3 Endpoint: Simulates a real-time lerobot-record buffer hook.
+    """
+    try:
+        # Step 1: Generate simulated real-time buffer streams
+        episodes = create_lerobot_buffer_mock()
         
-    gate = EdgeComputeQualityGate(dataset_file)
-    report = gate.analyze()
-    
-    return {"status": "success", "report": report}
+        # Step 2: Run the Architecture-Aware Drift Gate on the buffer
+        gate = ArchitectureAwareDriftGate(episodes)
+        report = gate.analyze()
+        
+        return {"status": "success", "report": report}
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

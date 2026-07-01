@@ -35,12 +35,14 @@ def test_diagnostic_demo_runs(page: Page):
     # Wait for the backend to process the raw HDF5 math and generate the matplotlib plot.
     terminal_content = page.locator("#terminal-content")
     
-    # We expect to see the successful JSON response message
-    expect(terminal_content).to_contain_text("All episodes passed quality gates", timeout=15000)
+    # We expect to see the successful JSON response message showing 2 corrupted episodes
+    expect(terminal_content).to_contain_text("FOUND 2 CORRUPTED EPISODES", timeout=15000)
+    expect(terminal_content).to_contain_text("LEADER_FOLLOWER_CALIBRATION_DRIFT", timeout=5000)
+    expect(terminal_content).to_contain_text("DIFFUSION_STALL_HESITATION", timeout=5000)
     
     # SUBSTANCE TEST: Assert that the Deep-Tech matplotlib distribution PNG successfully renders in the DOM
-    plot_img = terminal_content.locator("img[alt='Deep-Tech Kinematic Entropy Distribution']")
+    plot_img = terminal_content.locator("img[alt='Architecture-Aware Calibration Drift Plot']")
     expect(plot_img).to_be_visible()
-    expect(plot_img).to_have_attribute("src", "/static/raw_telemetry_entropy_plot.png")
+    expect(plot_img).to_have_attribute("src", "/static/calibration_drift_plot.png")
     
-    print("✅ Edge-Compute Playwright substance tests passed successfully.")
+    print("✅ V3 Architecture-Aware Playwright substance tests passed successfully.")
