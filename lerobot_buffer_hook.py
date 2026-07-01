@@ -17,11 +17,24 @@ class ArchitectureAwareDriftGate:
     def compute_leader_follower_drift(self, leader_pos, follower_pos):
         """
         Detects mechanical calibration offsets (Issue #3758).
-        Calculates the mean absolute error between leader and follower joints.
+        Calculates the mean absolute error between leader and follower joints,
+        strictly velocity-gated to stable frames to avoid falsely flagging PID tracking lag.
         """
-        # If the leader and follower are hardware-aligned, this should be ~0.
-        # A constant offset indicates a severe calibration drift.
-        delta = np.abs(leader_pos - follower_pos)
+        # Calculate velocity (diff of positions)
+        velocity = np.abs(np.diff(follower_pos, axis=0))
+        # Pad velocity to match position array length
+        velocity = np.vstack([np.zeros((1, follower_pos.shape[1])), velocity])
+        
+        # Velocity Gate: only consider frames where ALL joints are moving slower than threshold
+        stable_mask = np.all(velocity < 0.01, axis=1)
+        
+        if not np.any(stable_mask):
+            return 0.0 # No stable frames to measure calibration drift
+            
+        stable_leader = leader_pos[stable_mask]
+        stable_follower = follower_pos[stable_mask]
+        
+        delta = np.abs(stable_leader - stable_follower)
         mean_drift_per_joint = np.mean(delta, axis=0)
         max_drift = np.max(mean_drift_per_joint)
         return max_drift
