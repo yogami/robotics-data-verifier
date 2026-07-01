@@ -59,16 +59,19 @@ def serve_questionnaire():
 def serve_diagnostic():
     return RedirectResponse(url="/static/diagnostic.html")
 
+from generate_robomimic_mock import create_robomimic_mock
+from quality_gate_raw import EdgeComputeQualityGate
+
 @app.get("/api/diagnostic-demo")
 def run_diagnostic_demo():
-    """Runs the Data Quality Gate on a sample HDF5 dataset and returns the report."""
-    dataset_file = "dummy_dataset.h5"
+    """Runs the Data Quality Gate on a raw Robomimic HDF5 dataset and returns the report & plot."""
+    dataset_file = "static/robomimic_mh_raw.hdf5"
     
     # Generate the dataset if it doesn't exist in the container
     if not os.path.exists(dataset_file):
-        generate_dataset(dataset_file)
+        create_robomimic_mock(dataset_file)
         
-    gate = DataQualityGate(dataset_file)
-    gate.analyze()
+    gate = EdgeComputeQualityGate(dataset_file)
+    report = gate.analyze()
     
-    return {"status": "success", "report": gate.report}
+    return {"status": "success", "report": report}

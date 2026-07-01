@@ -272,7 +272,13 @@
                 <div class="highlight-cost">
                     Estimated Compute Waste Avoided: $${report.estimated_compute_waste_saved_usd.toLocaleString()} USD
                 </div>
-            `;
+            if (report.plot_url) {
+                html += `
+                    <div style="margin-top: 2rem; text-align: center;">
+                        <img src="${report.plot_url}" alt="Deep-Tech Kinematic Entropy Distribution" style="max-width: 100%; border-radius: 8px; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+                    </div>
+                `;
+            }
 
             content.innerHTML += html;
         }

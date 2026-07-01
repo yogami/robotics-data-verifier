@@ -1,0 +1,62 @@
+{
+    "dataset": "lerobot/droid_100",
+    "total_episodes_analyzed": 50,
+    "failed_episodes": [
+        {
+            "episode": "episode_2",
+            "failures": [
+                {
+                    "error_type": "KINEMATIC_ENTROPY",
+                    "severity": "HIGH",
+                    "metric": "13863378.73 jerk variance",
+                    "description": "Spike in high-frequency erratic movement detected. Operator fatigue / latency compensation."
+                }
+            ]
+        },
+        {
+            "episode": "episode_18",
+            "failures": [
+                {
+                    "error_type": "KINEMATIC_ENTROPY",
+                    "severity": "HIGH",
+                    "metric": "10302882.00 jerk variance",
+                    "description": "Spike in high-frequency erratic movement detected. Operator fatigue / latency compensation."
+                }
+            ]
+        },
+        {
+            "episode": "episode_26",
+            "failures": [
+                {
+                    "error_type": "KINEMATIC_ENTROPY",
+                    "severity": "HIGH",
+                    "metric": "21042704.03 jerk variance",
+                    "description": "Spike in high-frequency erratic movement detected. Operator fatigue / latency compensation."
+                }
+            ]
+        },
+        {
+            "episode": "episode_29",
+            "failures": [
+                {
+                    "error_type": "KINEMATIC_ENTROPY",
+                    "severity": "HIGH",
+                    "metric": "11464134.63 jerk variance",
+                    "description": "Spike in high-frequency erratic movement detected. Operator fatigue / latency compensation."
+                }
+            ]
+        },
+        {
+            "episode": "episode_43",
+            "failures": [
+                {
+                    "error_type": "KINEMATIC_ENTROPY",
+                    "severity": "HIGH",
+                    "metric": "11604870.49 jerk variance",
+                    "description": "Spike in high-frequency erratic movement detected. Operator fatigue / latency compensation."
+                }
+            ]
+        }
+    ],
+    "estimated_compute_waste_saved_usd": 2500
+}

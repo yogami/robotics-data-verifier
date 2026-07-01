@@ -11,3 +11,7 @@ psycopg2-binary
 pydantic
 h5py
 numpy
+datasets
+pyarrow
+matplotlib
+seaborn
