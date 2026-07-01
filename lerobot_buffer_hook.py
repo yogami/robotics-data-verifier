@@ -10,7 +10,7 @@ from kinematics import BimanualForwardKinematics
 
 class ArchitectureAwareDriftGate:
     """
-    V3.2 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
+    V3.3 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
     Bypasses HDF5/Parquet interpolation entirely.
     """
     def __init__(self, episodes=None, slack_webhook=None):
@@ -19,32 +19,44 @@ class ArchitectureAwareDriftGate:
         self.calibration_threshold = 0.087 # ~5 degrees
         self.reversal_threshold = 70 # High number of micro-corrections
         self.tcp_threshold_m = 0.006 # 6.0 mm (from LeRobot Issue #3758)
+        self.rot_threshold_deg = 10.0 # 10 degrees gripper orientation limit
         self.fk_solver = BimanualForwardKinematics()
 
     def compute_cartesian_drift(self, leader_pos, follower_pos, stable_mask):
         """
-        Calculates the maximum Cartesian (TCP) workspace drift in meters.
+        Calculates the maximum Cartesian (TCP) spatial drift (meters) and
+        geodesic orientation drift (degrees) during stable frames.
         """
         if not np.any(stable_mask):
-            return 0.0
+            return 0.0, 0.0
             
         stable_leader = leader_pos[stable_mask]
         stable_follower = follower_pos[stable_mask]
         
         max_tcp_drift = 0.0
+        max_rot_drift = 0.0
         
-        # Calculate FK for each stable frame
         for l_joint, f_joint in zip(stable_leader, stable_follower):
-            l_left, l_right = self.fk_solver.solve_bimanual_fk(l_joint)
-            f_left, f_right = self.fk_solver.solve_bimanual_fk(f_joint)
+            (l_l_pos, l_l_R), (l_r_pos, l_r_R) = self.fk_solver.solve_bimanual_fk(l_joint)
+            (f_l_pos, f_l_R), (f_r_pos, f_r_R) = self.fk_solver.solve_bimanual_fk(f_joint)
             
-            # Spatial drift is the Euclidean distance between leader (target) and follower
-            drift_left = np.linalg.norm(l_left - f_left)
-            drift_right = np.linalg.norm(l_right - f_right)
+            # 1. Spatial TCP Drift (Euclidean distance)
+            drift_l = np.linalg.norm(l_l_pos - f_l_pos)
+            drift_r = np.linalg.norm(l_r_pos - f_r_pos)
+            max_tcp_drift = max(max_tcp_drift, drift_l, drift_r)
             
-            max_tcp_drift = max(max_tcp_drift, drift_left, drift_right)
+            # 2. Geodesic Rotation Drift (Angle-axis delta)
+            for R_L, R_F in [(l_l_R, f_l_R), (l_r_R, f_r_R)]:
+                R_rel = R_L.T @ R_F
+                # tr(R) = 1 + 2*cos(theta)
+                trace_val = np.trace(R_rel)
+                cos_theta = (trace_val - 1.0) / 2.0
+                cos_theta = np.clip(cos_theta, -1.0, 1.0)
+                theta_rad = np.arccos(cos_theta)
+                theta_deg = np.degrees(theta_rad)
+                max_rot_drift = max(max_rot_drift, theta_deg)
             
-        return max_tcp_drift
+        return max_tcp_drift, max_rot_drift
         
     def compute_leader_follower_drift(self, leader_pos, follower_pos):
         """
@@ -52,12 +64,9 @@ class ArchitectureAwareDriftGate:
         Calculates the mean absolute error between leader and follower joints,
         strictly velocity-gated to stable frames to avoid falsely flagging PID tracking lag.
         """
-        # Calculate velocity (diff of positions)
         velocity = np.abs(np.diff(follower_pos, axis=0))
-        # Pad velocity to match position array length
         velocity = np.vstack([np.zeros((1, follower_pos.shape[1])), velocity])
         
-        # Velocity Gate: only consider frames where ALL joints are moving slower than 0.01 rad/s
         stable_mask = np.all(velocity < 0.01, axis=1)
         
         if not np.any(stable_mask):
@@ -123,15 +132,16 @@ class ArchitectureAwareDriftGate:
             follower_pos = ep["follower_qpos"]
             
             joint_drift, stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos)
-            tcp_drift = self.compute_cartesian_drift(leader_pos, follower_pos, stable_mask)
+            tcp_drift, rot_drift = self.compute_cartesian_drift(leader_pos, follower_pos, stable_mask)
             
-            if joint_drift > 0.15 or tcp_drift > self.tcp_threshold_m: # ~8.5 degrees or 6mm
+            # Check thresholds (joint offset, spatial offset, or rotational offset)
+            if joint_drift > 0.15 or tcp_drift > self.tcp_threshold_m or rot_drift > self.rot_threshold_deg:
                 failed_episodes.append({
                     "episode": ep_id,
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(joint_drift):.2f}° joint, {tcp_drift * 1000:.1f}mm TCP offset",
-                    "reason": f"Hardware calibration offset detected. TCP spatial displacement is {tcp_drift * 1000:.1f}mm, violating the {self.tcp_threshold_m * 1000:.1f}mm limit."
+                    "metric": f"{np.degrees(joint_drift):.1f}° joint, {tcp_drift * 1000:.1f}mm TCP offset, {rot_drift:.1f}° rot offset",
+                    "reason": f"Hardware calibration offset detected. TCP position drift is {tcp_drift * 1000:.1f}mm (limit: {self.tcp_threshold_m * 1000:.1f}mm), orientation drift is {rot_drift:.1f}° (limit: {self.rot_threshold_deg:.1f}°)."
                 })
                 continue
                 
@@ -203,17 +213,17 @@ class ArchitectureAwareDriftGate:
             actions = np.vstack(ep_data["action"].values)
             
             joint_drift, stable_mask = self.compute_leader_follower_drift(actions, states)
-            tcp_drift = self.compute_cartesian_drift(actions, states, stable_mask)
+            tcp_drift, rot_drift = self.compute_cartesian_drift(actions, states, stable_mask)
             episode_drifts[ep_idx] = (actions, states, stable_mask, joint_drift)
             
-            # Threshold evaluation for joint-space AND Cartesian TCP space
-            if joint_drift > self.calibration_threshold or tcp_drift > self.tcp_threshold_m:
+            # Threshold evaluation for joint, position TCP, or orientation TCP
+            if joint_drift > self.calibration_threshold or tcp_drift > self.tcp_threshold_m or rot_drift > self.rot_threshold_deg:
                 failed_episodes.append({
                     "episode": f"episode_{ep_idx}",
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(joint_drift):.2f}° joint, {tcp_drift * 1000:.1f}mm TCP offset",
-                    "reason": f"Real hardware offset detected on stable frames. TCP workspace displacement of {tcp_drift * 1000:.1f}mm violates the {self.tcp_threshold_m * 1000:.1f}mm limit (Issue #3758)."
+                    "metric": f"{np.degrees(joint_drift):.1f}° joint, {tcp_drift * 1000:.1f}mm TCP offset, {rot_drift:.1f}° rot offset",
+                    "reason": f"Real hardware offset detected on stable frames (ViperX 300 Kinematics). TCP position drift of {tcp_drift * 1000:.1f}mm violates the {self.tcp_threshold_m * 1000:.1f}mm limit, orientation drift of {rot_drift:.1f}° violates the {self.rot_threshold_deg:.1f}° limit (Issue #3758)."
                 })
                 continue
                 
