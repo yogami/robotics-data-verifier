@@ -9,3 +9,5 @@ uvicorn[standard]
 sqlalchemy
 psycopg2-binary
 pydantic
+h5py
+numpy

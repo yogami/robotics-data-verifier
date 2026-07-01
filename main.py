@@ -6,8 +6,11 @@ from sqlalchemy import Column, String, JSON, DateTime
 from pydantic import BaseModel
 from datetime import datetime
 import uuid
+import os
 
 import database
+from generate_synthetic_teleop import generate_dataset
+from quality_gate import DataQualityGate
 
 # Database Models
 class ResponseModel(database.Base):
@@ -51,3 +54,21 @@ def read_root():
 @app.get("/questionnaire")
 def serve_questionnaire():
     return RedirectResponse(url="/static/questionnaire.html")
+
+@app.get("/diagnostic")
+def serve_diagnostic():
+    return RedirectResponse(url="/static/diagnostic.html")
+
+@app.get("/api/diagnostic-demo")
+def run_diagnostic_demo():
+    """Runs the Data Quality Gate on a sample HDF5 dataset and returns the report."""
+    dataset_file = "dummy_dataset.h5"
+    
+    # Generate the dataset if it doesn't exist in the container
+    if not os.path.exists(dataset_file):
+        generate_dataset(dataset_file)
+        
+    gate = DataQualityGate(dataset_file)
+    gate.analyze()
+    
+    return {"status": "success", "report": gate.report}

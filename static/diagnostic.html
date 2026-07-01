@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Quality Gate | Live Diagnostic Demo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --surface-color: rgba(30, 41, 59, 0.7);
+            --border-color: rgba(255, 255, 255, 0.1);
+            --primary: #38bdf8;
+            --danger: #f43f5e;
+            --success: #10b981;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 85% 30%, rgba(244, 63, 94, 0.15) 0%, transparent 50%);
+            color: var(--text-primary);
+            min-height: 100vh;
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            margin-top: 2rem;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(to right, #38bdf8, #e879f9);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        .card {
+            background: var(--surface-color);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #0ea5e9, #3b82f6);
+            color: white;
+            border: none;
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 14px 0 rgba(14, 165, 233, 0.39);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(14, 165, 233, 0.23);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            background: #475569;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        /* Spinner */
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Terminal Output */
+        .terminal {
+            display: none;
+            background: #020617;
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-top: 2rem;
+            border: 1px solid #1e293b;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            color: #e2e8f0;
+            overflow-x: auto;
+        }
+
+        .terminal-header {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 1rem;
+        }
+
+        .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        .dot.red { background-color: #f87171; }
+        .dot.yellow { background-color: #facc15; }
+        .dot.green { background-color: #4ade80; }
+
+        .line {
+            margin: 0.5rem 0;
+            line-height: 1.5;
+        }
+
+        .text-success { color: var(--success); }
+        .text-danger { color: var(--danger); }
+        .text-primary { color: var(--primary); }
+        
+        .anomaly-card {
+            background: rgba(244, 63, 94, 0.1);
+            border-left: 4px solid var(--danger);
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .highlight-cost {
+            font-size: 1.2rem;
+            color: #fbbf24;
+            font-weight: bold;
+            margin-top: 1rem;
+            text-align: right;
+            border-top: 1px dashed #334155;
+            padding-top: 1rem;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="header">
+            <h1>Data Quality Gate</h1>
+            <p>Live verification of kinematic entropy & sim-to-real drift.</p>
+        </div>
+
+        <div class="card">
+            <p style="margin-top: 0; margin-bottom: 1.5rem; color: var(--text-secondary); line-height: 1.6;">
+                This demo initializes a synthetic HDF5 teleoperation dataset (50 episodes). 
+                The pipeline will compute exact timestamp deltas between camera and joint states, and evaluate the 3rd derivative of position (jerk) to flag operator fatigue.
+            </p>
+            
+            <button id="runBtn" class="btn" onclick="runDiagnostic()">
+                <span>Run Diagnostic Audit on ALOHA Sample</span>
+                <div id="spinner" class="spinner"></div>
+            </button>
+
+            <div id="terminal" class="terminal">
+                <div class="terminal-header">
+                    <div class="dot red"></div>
+                    <div class="dot yellow"></div>
+                    <div class="dot green"></div>
+                </div>
+                <div id="terminal-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function runDiagnostic() {
+            const btn = document.getElementById('runBtn');
+            const spinner = document.getElementById('spinner');
+            const terminal = document.getElementById('terminal');
+            const content = document.getElementById('terminal-content');
+
+            // UI Loading state
+            btn.disabled = true;
+            spinner.style.display = 'block';
+            terminal.style.display = 'block';
+            content.innerHTML = `
+                <div class="line text-secondary">> Initializing diagnostic pipeline...</div>
+                <div class="line text-secondary">> Fetching dataset metadata...</div>
+                <div class="line text-secondary">> Calculating kinematic derivatives and timestamp deltas...</div>
+            `;
+
+            try {
+                const response = await fetch('/api/diagnostic-demo');
+                const data = await response.json();
+
+                if (data.status === "success") {
+                    renderReport(data.report);
+                } else {
+                    content.innerHTML += `<div class="line text-danger">> Error: Failed to execute pipeline.</div>`;
+                }
+            } catch (error) {
+                content.innerHTML += `<div class="line text-danger">> Error: Connection to backend failed.</div>`;
+            } finally {
+                btn.disabled = false;
+                spinner.style.display = 'none';
+            }
+        }
+
+        function renderReport(report) {
+            const content = document.getElementById('terminal-content');
+            
+            let html = `
+                <div class="line text-primary">> Audit complete. Generating JSON report...</div>
+                <div class="line"><br></div>
+                <div class="line"><strong>Dataset:</strong> ${report.dataset}</div>
+                <div class="line"><strong>Episodes Analyzed:</strong> ${report.total_episodes_analyzed}</div>
+            `;
+
+            if (report.failed_episodes.length === 0) {
+                html += `<div class="line text-success">✅ All episodes passed quality gates.</div>`;
+            } else {
+                html += `<div class="line text-danger" style="margin-top: 1rem;">🚨 FOUND ${report.failed_episodes.length} CORRUPTED EPISODES</div>`;
+                
+                report.failed_episodes.forEach(ep => {
+                    ep.failures.forEach(fail => {
+                        html += `
+                            <div class="anomaly-card">
+                                <div><strong>Episode:</strong> ${ep.episode}</div>
+                                <div class="text-danger"><strong>Error Type:</strong> ${fail.error_type} (${fail.severity})</div>
+                                <div><strong>Metric:</strong> ${fail.metric}</div>
+                                <div style="color: #94a3b8; margin-top: 0.5rem; font-size: 0.85rem;">${fail.description}</div>
+                            </div>
+                        `;
+                    });
+                });
+            }
+
+            html += `
+                <div class="highlight-cost">
+                    Estimated Compute Waste Avoided: $${report.estimated_compute_waste_saved_usd.toLocaleString()} USD
+                </div>
+            `;
+
+            content.innerHTML += html;
+        }
+    </script>
+</body>
+</html>

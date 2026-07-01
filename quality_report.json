@@ -1,0 +1,29 @@
+{
+    "dataset": "dummy_dataset.h5",
+    "total_episodes_analyzed": 50,
+    "failed_episodes": [
+        {
+            "episode": "episode_14",
+            "failures": [
+                {
+                    "error_type": "TIMESTAMP_DRIFT",
+                    "severity": "CRITICAL",
+                    "metric": "53.35ms",
+                    "description": "Camera and joint states desynchronized beyond 30ms threshold. Policy will learn delayed causality."
+                }
+            ]
+        },
+        {
+            "episode": "episode_42",
+            "failures": [
+                {
+                    "error_type": "KINEMATIC_ENTROPY",
+                    "severity": "HIGH",
+                    "metric": "1764248726.98 jerk variance",
+                    "description": "Spike in high-frequency erratic movement detected. Indicates operator fatigue or mechanical jitter."
+                }
+            ]
+        }
+    ],
+    "estimated_compute_waste_saved_usd": 1000
+}
