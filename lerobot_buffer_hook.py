@@ -10,7 +10,7 @@ from kinematics import BimanualForwardKinematics
 
 class ArchitectureAwareDriftGate:
     """
-    V3.5 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
+    V3.6 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
     Combines robust relative outlier detection (z-score) and dt-aware velocity gating.
     Gating is performed directly in Cartesian TCP Space (position and orientation).
     All calculations are fully vectorized (loop-free) to support high-frequency edge execution.
@@ -20,8 +20,8 @@ class ArchitectureAwareDriftGate:
         self.slack_webhook = slack_webhook
         
         # Nominal calibration baselines for ALOHA/ViperX 300 (derived from dataset analysis)
-        self.nominal_median_tcp_mm = 33.3
-        self.nominal_mad_tcp_mm = 2.6
+        self.nominal_median_tcp_mm = 12.0
+        self.nominal_mad_tcp_mm = 3.0
         self.z_threshold = 3.0 # Strict statistical outlier threshold
         
         # Reversal rate threshold in reversals per 100 frames
@@ -40,8 +40,13 @@ class ArchitectureAwareDriftGate:
         stable_leader = leader_pos[stable_mask]
         stable_follower = follower_pos[stable_mask]
         
+        # Angle wrap leader - follower differences to [-pi, pi] to handle boundary wrapping
+        d = stable_leader - stable_follower
+        d = (d + np.pi) % (2 * np.pi) - np.pi
+        mapped_leader = stable_follower + d
+        
         # Batch solve FK in parallel for all stable frames
-        (l_l_pos, l_l_R), (l_r_pos, l_r_R) = self.fk_solver.solve_bimanual_fk(stable_leader)
+        (l_l_pos, l_l_R), (l_r_pos, l_r_R) = self.fk_solver.solve_bimanual_fk(mapped_leader)
         (f_l_pos, f_l_R), (f_r_pos, f_r_R) = self.fk_solver.solve_bimanual_fk(stable_follower)
         
         # Vectorized Euclidean spatial distance
@@ -77,23 +82,42 @@ class ArchitectureAwareDriftGate:
         velocity = joint_diff / dt[1:][:, np.newaxis]
         velocity = np.vstack([np.zeros((1, follower_pos.shape[1])), velocity])
         
-        # Velocity Gate: stable is velocity < 0.5 rad/s
+        # Velocity Gate: stable is velocity < 0.15 rad/s
         # Exclude gripper joints (6, 13) from stability check to avoid gripper lag false positives
         kinematic_joints = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
-        stable_mask = np.all(velocity[:, kinematic_joints] < 0.5, axis=1)
+        stable_mask = np.all(velocity[:, kinematic_joints] < 0.15, axis=1)
         
         return stable_mask
 
     def compute_direction_reversal_rate(self, positions):
         """
         Detects Diffusion Policy stalling / hesitation (zero-crossings).
+        Filters out encoder quantization noise using a velocity deadband of 0.01 rad/s.
         Returns reversals per 100 frames (episode-length-independent rate).
         """
         velocity = np.diff(positions, axis=0)
+        
+        # Apply velocity deadband to filter out encoder quantization jitter
+        # Dynamixel 12-bit encoders have 0.088 deg (0.0015 rad) resolution.
+        # Set deadband to 0.002 rad/s to clear quantization limits.
+        active_mask = np.abs(velocity) > 0.002
+
+        
+        # Extract signs
         signs = np.sign(velocity)
-        sign_changes = np.abs(np.diff(signs, axis=0)) > 0
-        reversals_per_joint = np.sum(sign_changes, axis=0)
-        max_reversals = np.max(reversals_per_joint)
+        
+        # Record sign changes only when active (above deadband)
+        sign_changes = np.zeros_like(velocity, dtype=bool)
+        for i in range(1, velocity.shape[0]):
+            for j in range(velocity.shape[1]):
+                if active_mask[i-1, j] and active_mask[i, j]:
+                    if signs[i-1, j] != signs[i, j]:
+                        sign_changes[i, j] = True
+                        
+        # Exclude gripper joints from reversal calculations (indexes 6 and 13)
+        kin_joints = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
+        reversals_per_joint = np.sum(sign_changes[:, kin_joints], axis=0)
+        max_reversals = np.max(reversals_per_joint) if len(reversals_per_joint) > 0 else 0
         n_frames = len(positions)
         return float(max_reversals) / n_frames * 100.0
 
@@ -140,7 +164,14 @@ class ArchitectureAwareDriftGate:
             dt = np.ones(len(leader_pos)) * 0.02
             
             stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos, dt)
-            tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(leader_pos, follower_pos, stable_mask)
+            
+            # Contact Filter: Grippers fully open (> 0.9) OR first 100 frames
+            gripper_open = (follower_pos[:, 6] > 0.9) & (follower_pos[:, 13] > 0.9)
+            free_space = np.arange(len(follower_pos)) < 100
+            contact_free_mask = gripper_open | free_space
+            
+            final_mask = stable_mask & contact_free_mask
+            tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(leader_pos, follower_pos, final_mask)
             
             if len(tcp_drifts) == 0:
                 continue
@@ -152,10 +183,10 @@ class ArchitectureAwareDriftGate:
             
             z_score = (mean_tcp - self.nominal_median_tcp_mm) / (1.4826 * self.nominal_mad_tcp_mm)
             
-            # Cartesian Triple-Gate evaluation
+            # Cartesian Triple-Gate evaluation (Gate B: > 40mm OR > 8 degrees)
             is_drift = (
                 z_score > self.z_threshold and
-                mean_tcp > 40.0 and
+                (mean_tcp > 40.0 or mean_rot > 8.0) and
                 temporal_consistency > 1.5
             )
             
@@ -221,7 +252,7 @@ class ArchitectureAwareDriftGate:
 
     def analyze_real_parquet(self, filepath):
         """
-        V3.5 Triple-Gate Audit on real Hugging Face Parquet data.
+        V3.6 Triple-Gate Audit on real Hugging Face Parquet data.
         Determines calibration failures based on Cartesian TCP space drift.
         """
         print(f"Analyzing real Hugging Face Parquet dataset: {filepath}")
@@ -247,8 +278,16 @@ class ArchitectureAwareDriftGate:
             dt = np.clip(dt, 0.001, 1.0)  # guard against bad timestamps
 
             stable_mask = self.compute_leader_follower_drift(actions, states, dt)
-            tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(actions, states, stable_mask)
-            episode_drifts[ep_idx] = (actions, states, stable_mask)
+            
+            # Contact Filter: Grippers fully open (> 0.9) OR first 100 frames
+            # Left gripper = index 6, Right gripper = index 13
+            gripper_open = (states[:, 6] > 0.9) & (states[:, 13] > 0.9)
+            free_space = np.arange(len(states)) < 100
+            contact_free_mask = gripper_open | free_space
+            
+            final_mask = stable_mask & contact_free_mask
+            tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(actions, states, final_mask)
+            episode_drifts[ep_idx] = (actions, states, final_mask)
 
             if len(tcp_drifts) > 0:
                 mean_tcp = np.mean(tcp_drifts) * 1000
@@ -281,8 +320,8 @@ class ArchitectureAwareDriftGate:
             # Gate A: Z-score on Cartesian TCP mean drift
             z_score = (ep["tcp_drift_mm"] - median_tcp) / (1.4826 * mad_tcp)
 
-            # Gate B: Absolute spatial threshold (TCP drift > 40.0mm or orientation > 5.0°)
-            is_large_offset = ep["tcp_drift_mm"] > 40.0 or ep["rot_drift"] > 5.0
+            # Gate B: Absolute spatial threshold (TCP drift > 40.0mm or orientation > 8.0°)
+            is_large_offset = ep["tcp_drift_mm"] > 40.0 or ep["rot_drift"] > 8.0
 
             # Gate C: Temporal consistency (|mean|/std > 1.5)
             is_steady_bias = ep["temporal_consistency"] > 1.5
@@ -311,10 +350,6 @@ class ArchitectureAwareDriftGate:
                 })
                 continue
 
-            # Direction reversal rate on real continuous-teleoperation data:
-            # Real ALOHA episodes at 50Hz produce 29-37 reversals/100 frames as a normal
-            # baseline for smooth human motion. This rate is NOT pathological.
-
         slack_status = "NOT_TRIGGERED"
         if failed_episodes and self.slack_webhook:
             fail = failed_episodes[0]
@@ -327,7 +362,7 @@ class ArchitectureAwareDriftGate:
             )
             slack_status = self.send_slack_alert(alert_msg)
 
-        # Plot: Compare Episode 9 (highest statistical deviation) vs Episode 5 (clean baseline)
+        # Plot: Compare Episode 9 vs Episode 5
         fig, ax = plt.subplots(figsize=(10, 6))
 
         ep_high = episode_drifts.get(9)

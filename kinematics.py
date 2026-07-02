@@ -3,24 +3,26 @@ import numpy as np
 class BimanualForwardKinematics:
     """
     Solves analytical Forward Kinematics for a bimanual ALOHA setup.
-    Models the ViperX 300 Follower Arm (750mm nominal reach, 800mm link sum)
-    to calculate Cartesian Tool Center Point (TCP) coordinates and 
-    orientation rotation matrices in the robot's physical workspace.
-    Supports both single-frame (1D) and vectorized batch (2D) inputs for high-performance edge compute.
+    Models the Interbotix ViperX 300 Follower Arm (800mm total reach) using
+    exact URDF translations and axis conventions to map joint states 
+    to Cartesian Tool Center Point (TCP) coordinates and 3D rotation matrices.
+    Supports both single-frame (1D) and vectorized batch (2D) inputs.
     """
     def __init__(self):
-        # ViperX 300 Link Lengths (meters)
-        self.L1 = 0.1385  # Base to shoulder (Z-axis offset)
-        self.L2 = 0.300   # Shoulder to elbow (X-axis offset in home pose)
-        self.L3 = 0.300   # Elbow to forearm roll (X-axis offset)
-        self.L4_a = 0.100 # Forearm roll to wrist pitch (X-axis offset)
-        self.L4_b = 0.100 # Wrist pitch to gripper TCP (X-axis offset)
+        # Official Interbotix ViperX 300 URDF Joint Offsets (meters)
+        self.L1_z = 0.1385  # Waist to Shoulder (Z-axis offset)
+        self.L2_x = 0.050   # Shoulder to Elbow X-offset
+        self.L2_z = 0.300   # Shoulder to Elbow Z-offset
+        self.L3_x = 0.300   # Elbow to Forearm Roll
+        self.L4_x = 0.065   # Forearm Roll to Wrist Pitch
+        self.L5_x = 0.100   # Wrist Pitch to Wrist Roll
+        self.L6_x = 0.100   # Wrist Roll to Gripper TCP
 
     def solve_arm_fk(self, joints):
         """
         Solves analytical FK for single frame (1D array of shape (7,)) 
         or vectorized batch of frames (2D array of shape (N, 7)).
-        Expected joints order: 
+        Expected joint order: 
             0: waist (Z-rotation)
             1: shoulder (Y-pitch)
             2: elbow (Y-pitch)
@@ -46,23 +48,23 @@ class BimanualForwardKinematics:
                 return np.array([0.0, 0.0, 0.0]), np.eye(3)
             q1, q2, q3, q4, q5, q6 = joints[0], joints[1], joints[2], joints[3], joints[4], joints[5]
 
-        # 1. Base to Shoulder: Z-axis translation and Z-rotation
+        # 1. Base to Waist: Z-rotation
         c1, s1 = np.cos(q1), np.sin(q1)
         if is_batch:
             T01 = np.zeros((N, 4, 4))
             T01[:, 0, 0] = c1; T01[:, 0, 1] = -s1
             T01[:, 1, 0] = s1; T01[:, 1, 1] = c1
-            T01[:, 2, 2] = 1.0; T01[:, 2, 3] = self.L1
+            T01[:, 2, 2] = 1.0; T01[:, 2, 3] = self.L1_z
             T01[:, 3, 3] = 1.0
         else:
             T01 = np.array([
                 [c1, -s1, 0, 0],
                 [s1,  c1, 0, 0],
-                [0,   0,  1, self.L1],
+                [0,   0,  1, self.L1_z],
                 [0,   0,  0, 1]
             ])
         
-        # 2. Shoulder to Elbow: Y-rotation and X-translation
+        # 2. Waist to Shoulder: Y-rotation and offsets
         c2, s2 = np.cos(q2), np.sin(q2)
         if is_batch:
             R_y2 = np.zeros((N, 4, 4))
@@ -72,7 +74,8 @@ class BimanualForwardKinematics:
             R_y2[:, 3, 3] = 1.0
             
             offset_2 = np.tile(np.eye(4), (N, 1, 1))
-            offset_2[:, 0, 3] = self.L2
+            offset_2[:, 0, 3] = self.L2_x
+            offset_2[:, 2, 3] = self.L2_z
             T12 = R_y2 @ offset_2
         else:
             T12 = np.array([
@@ -81,13 +84,13 @@ class BimanualForwardKinematics:
                 [s2,  0, c2,  0],
                 [0,   0, 0,   1]
             ]) @ np.array([
-                [1, 0, 0, self.L2],
+                [1, 0, 0, self.L2_x],
                 [0, 1, 0, 0],
-                [0, 0, 1, 0],
+                [0, 0, 1, self.L2_z],
                 [0, 0, 0, 1]
             ])
         
-        # 3. Elbow to Forearm Roll: Y-rotation and X-translation
+        # 3. Shoulder to Elbow: Y-rotation and offsets
         c3, s3 = np.cos(q3), np.sin(q3)
         if is_batch:
             R_y3 = np.zeros((N, 4, 4))
@@ -97,7 +100,7 @@ class BimanualForwardKinematics:
             R_y3[:, 3, 3] = 1.0
             
             offset_3 = np.tile(np.eye(4), (N, 1, 1))
-            offset_3[:, 0, 3] = self.L3
+            offset_3[:, 0, 3] = self.L3_x
             T23 = R_y3 @ offset_3
         else:
             T23 = np.array([
@@ -106,13 +109,13 @@ class BimanualForwardKinematics:
                 [s3,  0, c3,  0],
                 [0,   0, 0,   1]
             ]) @ np.array([
-                [1, 0, 0, self.L3],
+                [1, 0, 0, self.L3_x],
                 [0, 1, 0, 0],
                 [0, 0, 1, 0],
                 [0, 0, 0, 1]
             ])
         
-        # 4. Forearm Roll to Wrist Pitch: X-rotation and translation L4_a
+        # 4. Elbow to Forearm Roll: X-rotation and offsets
         c4, s4 = np.cos(q4), np.sin(q4)
         if is_batch:
             R_x4 = np.zeros((N, 4, 4))
@@ -122,7 +125,7 @@ class BimanualForwardKinematics:
             R_x4[:, 3, 3] = 1.0
             
             offset_4 = np.tile(np.eye(4), (N, 1, 1))
-            offset_4[:, 0, 3] = self.L4_a
+            offset_4[:, 0, 3] = self.L4_x
             T34 = R_x4 @ offset_4
         else:
             T34 = np.array([
@@ -131,13 +134,13 @@ class BimanualForwardKinematics:
                 [0, s4,  c4,  0],
                 [0, 0,   0,   1]
             ]) @ np.array([
-                [1, 0, 0, self.L4_a],
+                [1, 0, 0, self.L4_x],
                 [0, 1, 0, 0],
                 [0, 0, 1, 0],
                 [0, 0, 0, 1]
             ])
         
-        # 5. Wrist Pitch to Wrist Roll: Y-rotation and translation L4_b
+        # 5. Forearm Roll to Wrist Pitch: Y-rotation and offsets
         c5, s5 = np.cos(q5), np.sin(q5)
         if is_batch:
             R_y5 = np.zeros((N, 4, 4))
@@ -147,7 +150,7 @@ class BimanualForwardKinematics:
             R_y5[:, 3, 3] = 1.0
             
             offset_5 = np.tile(np.eye(4), (N, 1, 1))
-            offset_5[:, 0, 3] = self.L4_b
+            offset_5[:, 0, 3] = self.L5_x
             T45 = R_y5 @ offset_5
         else:
             T45 = np.array([
@@ -156,26 +159,35 @@ class BimanualForwardKinematics:
                 [s5,  0, c5,  0],
                 [0,   0, 0,   1]
             ]) @ np.array([
-                [1, 0, 0, self.L4_b],
+                [1, 0, 0, self.L5_x],
                 [0, 1, 0, 0],
                 [0, 0, 1, 0],
                 [0, 0, 0, 1]
             ])
         
-        # 6. Wrist Roll to end effector TCP: X-rotation
+        # 6. Wrist Pitch to Wrist Roll: X-rotation and TCP offset
         c6, s6 = np.cos(q6), np.sin(q6)
         if is_batch:
-            T56 = np.zeros((N, 4, 4))
-            T56[:, 0, 0] = 1.0
-            T56[:, 1, 1] = c6; T56[:, 1, 2] = -s6
-            T56[:, 2, 1] = s6; T56[:, 2, 2] = c6
-            T56[:, 3, 3] = 1.0
+            R_x6 = np.zeros((N, 4, 4))
+            R_x6[:, 0, 0] = 1.0
+            R_x6[:, 1, 1] = c6; R_x6[:, 1, 2] = -s6
+            R_x6[:, 2, 1] = s6; R_x6[:, 2, 2] = c6
+            R_x6[:, 3, 3] = 1.0
+            
+            offset_6 = np.tile(np.eye(4), (N, 1, 1))
+            offset_6[:, 0, 3] = self.L6_x
+            T56 = R_x6 @ offset_6
         else:
             T56 = np.array([
                 [1, 0,   0,  0],
                 [0, c6, -s6, 0],
                 [0, s6,  c6, 0],
                 [0, 0,   0,  1]
+            ]) @ np.array([
+                [1, 0, 0, self.L6_x],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
             ])
         
         # Chain product of homogenous transformations
