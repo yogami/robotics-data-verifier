@@ -13,6 +13,7 @@ class ArchitectureAwareDriftGate:
     V3.5 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
     Combines robust relative outlier detection (z-score) and dt-aware velocity gating.
     Gating is performed directly in Cartesian TCP Space (position and orientation).
+    All calculations are fully vectorized (loop-free) to support high-frequency edge execution.
     """
     def __init__(self, episodes=None, slack_webhook=None):
         self.episodes = episodes
@@ -31,6 +32,7 @@ class ArchitectureAwareDriftGate:
         """
         Calculates the frame-by-frame Cartesian TCP position drifts (meters) and
         geodesic orientation rotation drifts (degrees) during stable frames.
+        Fully vectorized over the episode steps (no loops) for fast edge performance.
         """
         if not np.any(stable_mask):
             return np.array([]), np.array([])
@@ -38,30 +40,33 @@ class ArchitectureAwareDriftGate:
         stable_leader = leader_pos[stable_mask]
         stable_follower = follower_pos[stable_mask]
         
-        tcp_drifts = []
-        rot_drifts = []
+        # Batch solve FK in parallel for all stable frames
+        (l_l_pos, l_l_R), (l_r_pos, l_r_R) = self.fk_solver.solve_bimanual_fk(stable_leader)
+        (f_l_pos, f_l_R), (f_r_pos, f_r_R) = self.fk_solver.solve_bimanual_fk(stable_follower)
         
-        for l_joint, f_joint in zip(stable_leader, stable_follower):
-            (l_l_pos, l_l_R), (l_r_pos, l_r_R) = self.fk_solver.solve_bimanual_fk(l_joint)
-            (f_l_pos, f_l_R), (f_r_pos, f_r_R) = self.fk_solver.solve_bimanual_fk(f_joint)
-            
-            # Spatial TCP Drift (Euclidean distance)
-            drift_l = np.linalg.norm(l_l_pos - f_l_pos)
-            drift_r = np.linalg.norm(l_r_pos - f_r_pos)
-            tcp_drifts.append(max(drift_l, drift_r))
-            
-            # Geodesic Rotation Drift (Angle-axis delta)
-            R_rel_l = l_l_R.T @ f_l_R
-            R_rel_r = l_r_R.T @ f_r_R
-            
-            for R_rel in [R_rel_l, R_rel_r]:
-                trace_val = np.trace(R_rel)
-                cos_theta = (trace_val - 1.0) / 2.0
-                cos_theta = np.clip(cos_theta, -1.0, 1.0)
-                theta_rad = np.arccos(cos_theta)
-                rot_drifts.append(np.degrees(theta_rad))
-            
-        return np.array(tcp_drifts), np.array(rot_drifts)
+        # Vectorized Euclidean spatial distance
+        drift_l = np.linalg.norm(l_l_pos - f_l_pos, axis=1)
+        drift_r = np.linalg.norm(l_r_pos - f_r_pos, axis=1)
+        tcp_drifts = np.maximum(drift_l, drift_r)
+        
+        # Vectorized relative rotation matrices: R_rel = R_leader^T @ R_follower
+        R_rel_l = np.matmul(l_l_R.transpose(0, 2, 1), f_l_R)
+        R_rel_r = np.matmul(l_r_R.transpose(0, 2, 1), f_r_R)
+        
+        # Vectorized trace calculation: sum along the diagonals of the Nx3x3 matrices
+        trace_l = np.sum(np.diagonal(R_rel_l, axis1=1, axis2=2), axis=1)
+        trace_r = np.sum(np.diagonal(R_rel_r, axis1=1, axis2=2), axis=1)
+        
+        # Vectorized geodesic angle calculation (SO(3) distance)
+        cos_theta_l = np.clip((trace_l - 1.0) / 2.0, -1.0, 1.0)
+        cos_theta_r = np.clip((trace_r - 1.0) / 2.0, -1.0, 1.0)
+        
+        theta_rad_l = np.arccos(cos_theta_l)
+        theta_rad_r = np.arccos(cos_theta_r)
+        
+        rot_drifts = np.degrees(np.maximum(theta_rad_l, theta_rad_r))
+        
+        return tcp_drifts, rot_drifts
         
     def compute_leader_follower_drift(self, leader_pos, follower_pos, dt):
         """
@@ -228,7 +233,7 @@ class ArchitectureAwareDriftGate:
         episode_data = []
         episode_drifts = {}
         
-        # Step 1: Calculate stable Cartesian position/rotation series for each episode
+        # Step 1: Calculate stable Cartesian position/rotation series for each episode (Vectorized batch FK)
         for ep_idx in episodes_to_analyze:
             ep_data = df[df["episode_index"] == ep_idx]
 
