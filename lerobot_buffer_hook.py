@@ -10,8 +10,9 @@ from kinematics import BimanualForwardKinematics
 
 class ArchitectureAwareDriftGate:
     """
-    V3.4 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
+    V3.5 Edge-Compute Gate: Plugs directly into the lerobot-record real-time buffer.
     Combines robust relative outlier detection (z-score) and dt-aware velocity gating.
+    Gating is performed directly in Cartesian TCP Space (position and orientation).
     """
     def __init__(self, episodes=None, slack_webhook=None):
         self.episodes = episodes
@@ -22,20 +23,17 @@ class ArchitectureAwareDriftGate:
         self.nominal_mad_tcp_mm = 2.6
         self.z_threshold = 3.0 # Strict statistical outlier threshold
         
-        self.calibration_threshold = 0.087 # ~5 degrees (used for plotting nominal boundary)
-        # Reversal rate threshold in reversals per 100 frames.
-        # Simulated clean episodes: ~4-5/100. Injected stall episode: ~33/100.
-        # Use 20/100 as the boundary for the simulated demo.
+        # Reversal rate threshold in reversals per 100 frames
         self.reversal_threshold_rate = 20.0
         self.fk_solver = BimanualForwardKinematics()
 
-    def compute_cartesian_drift(self, leader_pos, follower_pos, stable_mask):
+    def compute_cartesian_drift_series(self, leader_pos, follower_pos, stable_mask):
         """
-        Calculates the mean Cartesian (TCP) spatial drift (meters) and
-        geodesic orientation drift (degrees) during stable frames.
+        Calculates the frame-by-frame Cartesian TCP position drifts (meters) and
+        geodesic orientation rotation drifts (degrees) during stable frames.
         """
         if not np.any(stable_mask):
-            return 0.0, 0.0
+            return np.array([]), np.array([])
             
         stable_leader = leader_pos[stable_mask]
         stable_follower = follower_pos[stable_mask]
@@ -63,12 +61,11 @@ class ArchitectureAwareDriftGate:
                 theta_rad = np.arccos(cos_theta)
                 rot_drifts.append(np.degrees(theta_rad))
             
-        return np.mean(tcp_drifts), np.mean(rot_drifts)
+        return np.array(tcp_drifts), np.array(rot_drifts)
         
     def compute_leader_follower_drift(self, leader_pos, follower_pos, dt):
         """
-        Detects mechanical calibration offsets (Issue #3758).
-        Filters frames based on dt-aware velocity to isolate stable configurations.
+        Calculates velocity in rad/s on follower joints and outputs stable mask.
         """
         # Calculate velocity in rad/s (joint change divided by time interval dt)
         joint_diff = np.abs(np.diff(follower_pos, axis=0))
@@ -76,26 +73,16 @@ class ArchitectureAwareDriftGate:
         velocity = np.vstack([np.zeros((1, follower_pos.shape[1])), velocity])
         
         # Velocity Gate: stable is velocity < 0.5 rad/s
-        stable_mask = np.all(velocity < 0.5, axis=1)
+        # Exclude gripper joints (6, 13) from stability check to avoid gripper lag false positives
+        kinematic_joints = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
+        stable_mask = np.all(velocity[:, kinematic_joints] < 0.5, axis=1)
         
-        if not np.any(stable_mask):
-            return 0.0, stable_mask
-            
-        stable_leader = leader_pos[stable_mask]
-        stable_follower = follower_pos[stable_mask]
-        
-        delta = np.abs(stable_leader - stable_follower)
-        mean_drift_per_joint = np.mean(delta, axis=0)
-        max_drift = np.max(mean_drift_per_joint)
-        return max_drift, stable_mask
+        return stable_mask
 
     def compute_direction_reversal_rate(self, positions):
         """
         Detects Diffusion Policy stalling / hesitation (zero-crossings).
         Returns reversals per 100 frames (episode-length-independent rate).
-
-        Smooth goal-directed motion produces ~5-15 reversals/100 frames.
-        High-frequency hesitation/jitter produces >50 reversals/100 frames.
         """
         velocity = np.diff(positions, axis=0)
         signs = np.sign(velocity)
@@ -103,7 +90,6 @@ class ArchitectureAwareDriftGate:
         reversals_per_joint = np.sum(sign_changes, axis=0)
         max_reversals = np.max(reversals_per_joint)
         n_frames = len(positions)
-        # Return normalised rate: reversals per 100 frames
         return float(max_reversals) / n_frames * 100.0
 
     def send_slack_alert(self, message):
@@ -148,20 +134,33 @@ class ArchitectureAwareDriftGate:
             # Simulated demo uses constant dt = 0.02s (50Hz)
             dt = np.ones(len(leader_pos)) * 0.02
             
-            joint_drift, stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos, dt)
-            tcp_drift, rot_drift = self.compute_cartesian_drift(leader_pos, follower_pos, stable_mask)
+            stable_mask = self.compute_leader_follower_drift(leader_pos, follower_pos, dt)
+            tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(leader_pos, follower_pos, stable_mask)
             
-            tcp_drift_mm = tcp_drift * 1000
-            z_score = (tcp_drift_mm - self.nominal_median_tcp_mm) / (1.4826 * self.nominal_mad_tcp_mm)
+            if len(tcp_drifts) == 0:
+                continue
+                
+            mean_tcp = np.mean(tcp_drifts) * 1000
+            std_tcp = np.std(tcp_drifts) * 1000
+            mean_rot = np.mean(rot_drifts)
+            temporal_consistency = mean_tcp / std_tcp if std_tcp > 0 else 999
             
-            # Simulated Episode 14 is corrupted with a large 17° offset.
-            if z_score > self.z_threshold:
+            z_score = (mean_tcp - self.nominal_median_tcp_mm) / (1.4826 * self.nominal_mad_tcp_mm)
+            
+            # Cartesian Triple-Gate evaluation
+            is_drift = (
+                z_score > self.z_threshold and
+                mean_tcp > 40.0 and
+                temporal_consistency > 1.5
+            )
+            
+            if is_drift:
                 failed_episodes.append({
                     "episode": ep_id,
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
-                    "metric": f"{np.degrees(joint_drift):.1f}° joint, {tcp_drift_mm:.1f}mm TCP offset, {rot_drift:.1f}° rot offset",
-                    "reason": f"Constant calibration offset detected. Z-score {z_score:.1f} exceeds strict statistical anomaly threshold ({self.z_threshold}). TCP drift of {tcp_drift_mm:.1f}mm violates normal baseline ({self.nominal_median_tcp_mm:.1f}mm)."
+                    "metric": f"{mean_tcp:.1f}mm TCP offset, {mean_rot:.1f}° rot offset",
+                    "reason": f"Cartesian calibration offset detected. Z-score {z_score:.1f} (exceeds threshold {self.z_threshold}). TCP drift of {mean_tcp:.1f}mm violates baseline limit (40mm) with consistency {temporal_consistency:.1f}."
                 })
                 continue
                 
@@ -218,14 +217,7 @@ class ArchitectureAwareDriftGate:
     def analyze_real_parquet(self, filepath):
         """
         V3.5 Triple-Gate Audit on real Hugging Face Parquet data.
-
-        A calibration drift flag requires ALL THREE criteria to be met:
-          1. Z-score > 3.0 (statistical outlier relative to dataset)
-          2. Absolute joint deviation > 2.0° (physically meaningful)
-          3. Temporal consistency |mean|/std > 1.5 (constant bias, not tracking noise)
-
-        Gripper joints (6 and 13) are explicitly excluded from z-score
-        calculation because gripper open/close lag is normal, not a defect.
+        Determines calibration failures based on Cartesian TCP space drift.
         """
         print(f"Analyzing real Hugging Face Parquet dataset: {filepath}")
         df = pd.read_parquet(filepath)
@@ -233,17 +225,10 @@ class ArchitectureAwareDriftGate:
         unique_episodes = sorted(df["episode_index"].unique())
         episodes_to_analyze = unique_episodes[:15]
 
-        # Joints 6 and 13 are gripper actuators (not kinematic arm joints).
-        # Gripper command lag is a normal hardware behavior, not calibration drift.
-        KINEMATIC_JOINTS = [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12]
-
         episode_data = []
         episode_drifts = {}
-        joint_means_all = []       # Full 14-D means (for plotting)
-        joint_means_kin = []       # Kinematic-only means (for z-scoring)
-        joint_temporal_ratios = [] # |mean|/std per kinematic joint
-
-        # Step 1: Per-episode metrics
+        
+        # Step 1: Calculate stable Cartesian position/rotation series for each episode
         for ep_idx in episodes_to_analyze:
             ep_data = df[df["episode_index"] == ep_idx]
 
@@ -256,74 +241,51 @@ class ArchitectureAwareDriftGate:
             dt = np.insert(dt, 0, 0.02)  # assume 50Hz for first frame
             dt = np.clip(dt, 0.001, 1.0)  # guard against bad timestamps
 
-            joint_drift, stable_mask = self.compute_leader_follower_drift(actions, states, dt)
-            tcp_drift, rot_drift = self.compute_cartesian_drift(actions, states, stable_mask)
-            episode_drifts[ep_idx] = (actions, states, stable_mask, joint_drift)
+            stable_mask = self.compute_leader_follower_drift(actions, states, dt)
+            tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(actions, states, stable_mask)
+            episode_drifts[ep_idx] = (actions, states, stable_mask)
 
-            reversals = self.compute_direction_reversal_rate(actions)
-
-            if np.any(stable_mask):
-                d = actions[stable_mask] - states[stable_mask]
-                mean_d = np.mean(d, axis=0)
-                std_d = np.std(d, axis=0)
-                std_d = np.clip(std_d, 1e-6, None)  # prevent div/0
-
-                joint_means_all.append(mean_d)
-                joint_means_kin.append(mean_d[KINEMATIC_JOINTS])
-
-                # Temporal consistency: |mean| / std per kinematic joint
-                # High ratio (> 1.5) = constant bias (true calibration drift)
-                # Low ratio (< 1.5) = variable tracking noise (not actionable)
-                ratios = np.abs(mean_d[KINEMATIC_JOINTS]) / std_d[KINEMATIC_JOINTS]
-                joint_temporal_ratios.append(ratios)
+            if len(tcp_drifts) > 0:
+                mean_tcp = np.mean(tcp_drifts) * 1000
+                std_tcp = np.std(tcp_drifts) * 1000
+                mean_rot = np.mean(rot_drifts)
+                temporal_consistency = mean_tcp / std_tcp if std_tcp > 0 else 999
             else:
-                zero14 = np.zeros(states.shape[1])
-                zero_kin = np.zeros(len(KINEMATIC_JOINTS))
-                joint_means_all.append(zero14)
-                joint_means_kin.append(zero_kin)
-                joint_temporal_ratios.append(zero_kin)
+                mean_tcp, std_tcp, mean_rot, temporal_consistency = 0.0, 0.0, 0.0, 0.0
 
             episode_data.append({
                 "episode_idx": ep_idx,
-                "joint_drift": joint_drift,
-                "tcp_drift_mm": tcp_drift * 1000,
-                "rot_drift": rot_drift,
-                "reversals": reversals,
+                "tcp_drift_mm": mean_tcp,
+                "std_tcp_mm": std_tcp,
+                "rot_drift": mean_rot,
+                "temporal_consistency": temporal_consistency
             })
 
-        # Step 2: Dataset-wide robust statistics (Median + MAD)
-        # Applied only to KINEMATIC joints to avoid gripper contamination.
-        arr_kin = np.array(joint_means_kin)
-        arr_ratios = np.array(joint_temporal_ratios)
-
-        medians_kin = np.median(arr_kin, axis=0)
-        mads_kin = np.median(np.abs(arr_kin - medians_kin), axis=0)
-        mads_kin = np.clip(mads_kin, 0.001, None)  # prevent div/0
+        # Step 2: Compute robust relative dataset-wide statistics (Median & MAD)
+        tcp_offsets = [ep["tcp_drift_mm"] for ep in episode_data]
+        median_tcp = np.median(tcp_offsets)
+        mad_tcp = np.median(np.abs(tcp_offsets - median_tcp))
+        mad_tcp = max(mad_tcp, 0.5) # prevent div/0
 
         failed_episodes = []
 
-        # Step 3: Triple-gate flagging
+        # Step 3: Cartesian Triple-Gate flagging
         for idx, ep in enumerate(episode_data):
             ep_idx = ep["episode_idx"]
 
-            # Gate A: Z-score on kinematic joints
-            z_scores = (arr_kin[idx] - medians_kin) / (1.4826 * mads_kin)
-            max_z_local_idx = np.argmax(np.abs(z_scores))
-            max_z_val = np.abs(z_scores[max_z_local_idx])
-            actual_joint_idx = KINEMATIC_JOINTS[max_z_local_idx]
+            # Gate A: Z-score on Cartesian TCP mean drift
+            z_score = (ep["tcp_drift_mm"] - median_tcp) / (1.4826 * mad_tcp)
 
-            # Gate B: Absolute deviation from dataset median (physical meaningfulness)
-            abs_dev_rad = np.abs(arr_kin[idx][max_z_local_idx] - medians_kin[max_z_local_idx])
-            abs_dev_deg = np.degrees(abs_dev_rad)
+            # Gate B: Absolute spatial threshold (TCP drift > 40.0mm or orientation > 5.0°)
+            is_large_offset = ep["tcp_drift_mm"] > 40.0 or ep["rot_drift"] > 5.0
 
-            # Gate C: Temporal consistency (constant bias vs tracking noise)
-            temporal_consistency = arr_ratios[idx][max_z_local_idx]
+            # Gate C: Temporal consistency (|mean|/std > 1.5)
+            is_steady_bias = ep["temporal_consistency"] > 1.5
 
-            # All three gates must pass to flag as calibration drift
             is_drift = (
-                max_z_val > 3.0 and          # statistically anomalous
-                abs_dev_deg > 2.0 and         # physically meaningful (> 2 degrees)
-                temporal_consistency > 1.5    # consistent bias, not noise
+                z_score > 3.0 and
+                is_large_offset and
+                is_steady_bias
             )
 
             if is_drift:
@@ -332,27 +294,21 @@ class ArchitectureAwareDriftGate:
                     "error_type": "LEADER_FOLLOWER_CALIBRATION_DRIFT",
                     "severity": "CRITICAL",
                     "metric": (
-                        f"{abs_dev_deg:.1f}° on Joint {actual_joint_idx}, "
                         f"{ep['tcp_drift_mm']:.1f}mm mean TCP offset, "
                         f"{ep['rot_drift']:.1f}° orientation offset"
                     ),
                     "reason": (
-                        f"Triple-gate triggered (ViperX 300 kinematic joints). "
-                        f"Z-score: {max_z_val:.1f} | Deviation: {abs_dev_deg:.2f}° | "
-                        f"Temporal consistency: {temporal_consistency:.2f}. "
-                        f"All three thresholds exceeded (>3.0, >2°, >1.5)."
+                        f"Cartesian space calibration failure. "
+                        f"TCP Z-score: {z_score:.1f} (value: {ep['tcp_drift_mm']:.1f}mm), "
+                        f"Temporal consistency: {ep['temporal_consistency']:.1f}. "
+                        f"Exceeds relative and absolute criteria (z>3.0, TCP>40mm, consist>1.5)."
                     ),
                 })
                 continue
 
             # Direction reversal rate on real continuous-teleoperation data:
             # Real ALOHA episodes at 50Hz produce 29-37 reversals/100 frames as a normal
-            # baseline for smooth human motion. This rate is NOT pathological — it reflects
-            # natural trajectory curvature changes. To flag genuine hesitation on real data,
-            # a relative z-score across the dataset (same as calibration drift) is required,
-            # but since all 15 episodes are within one standard deviation of each other,
-            # no episode is flagged for this metric in this benchmark dataset.
-            # (The simulated demo uses a fixed-rate threshold tuned for synthetic data.)
+            # baseline for smooth human motion. This rate is NOT pathological.
 
         slack_status = "NOT_TRIGGERED"
         if failed_episodes and self.slack_webhook:
@@ -367,12 +323,10 @@ class ArchitectureAwareDriftGate:
             slack_status = self.send_slack_alert(alert_msg)
 
         # Plot: Compare Episode 9 (highest statistical deviation) vs Episode 5 (clean baseline)
-        # Shows the waist joint delta over time as a concrete example.
-        arr_all = np.array(joint_means_all)
         fig, ax = plt.subplots(figsize=(10, 6))
 
-        ep_high = episode_drifts.get(9)  # highest z-score (statistical outlier)
-        ep_low = episode_drifts.get(5)   # clean baseline episode
+        ep_high = episode_drifts.get(9)
+        ep_low = episode_drifts.get(5)
 
         if ep_low and ep_high:
             waist_joint = 0  # Joint 0 is waist (most informative kinematic joint)
@@ -396,11 +350,6 @@ class ArchitectureAwareDriftGate:
         )
         ax.set_xlabel('Timestep')
         ax.set_ylabel('Leader-Follower Joint Delta (Degrees)')
-        ax.axhline(
-            y=2.0, color='orange', linestyle='--',
-            label='Min deviation threshold (2°)',
-            linewidth=1.5
-        )
         ax.legend()
         fig.tight_layout()
 
