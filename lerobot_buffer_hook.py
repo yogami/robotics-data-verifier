@@ -3,7 +3,6 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import os
 import urllib.request
 import json
 from kinematics import BimanualForwardKinematics
@@ -58,16 +57,24 @@ class ArchitectureAwareDriftGate:
         R_rel_l = np.matmul(l_l_R.transpose(0, 2, 1), f_l_R)
         R_rel_r = np.matmul(l_r_R.transpose(0, 2, 1), f_r_R)
         
-        # Vectorized trace calculation: sum along the diagonals of the Nx3x3 matrices
-        trace_l = np.sum(np.diagonal(R_rel_l, axis1=1, axis2=2), axis=1)
-        trace_r = np.sum(np.diagonal(R_rel_r, axis1=1, axis2=2), axis=1)
-        
-        # Vectorized geodesic angle calculation (SO(3) distance)
-        cos_theta_l = np.clip((trace_l - 1.0) / 2.0, -1.0, 1.0)
-        cos_theta_r = np.clip((trace_r - 1.0) / 2.0, -1.0, 1.0)
-        
-        theta_rad_l = np.arccos(cos_theta_l)
-        theta_rad_r = np.arccos(cos_theta_r)
+        # Numerically stable geodesic angle via atan2 (avoids arccos instability near θ=0)
+        # Uses: θ = 2 * atan2(||R - I||_F, ||R + I||_F)
+        I_batch = np.tile(np.eye(3), (R_rel_l.shape[0], 1, 1))
+
+
+        diff_l = R_rel_l - I_batch
+        sum_l = R_rel_l + I_batch
+        theta_rad_l = 2.0 * np.arctan2(
+            np.sqrt(np.sum(diff_l**2, axis=(1, 2))),
+            np.sqrt(np.sum(sum_l**2, axis=(1, 2)))
+        )
+
+        diff_r = R_rel_r - I_batch
+        sum_r = R_rel_r + I_batch
+        theta_rad_r = 2.0 * np.arctan2(
+            np.sqrt(np.sum(diff_r**2, axis=(1, 2))),
+            np.sqrt(np.sum(sum_r**2, axis=(1, 2)))
+        )
         
         rot_drifts = np.degrees(np.maximum(theta_rad_l, theta_rad_r))
         
@@ -102,7 +109,6 @@ class ArchitectureAwareDriftGate:
         # Set deadband to 0.002 rad/s to clear quantization limits.
         active_mask = np.abs(velocity) > 0.002
 
-        
         # Extract signs
         signs = np.sign(velocity)
         
@@ -173,13 +179,14 @@ class ArchitectureAwareDriftGate:
             final_mask = stable_mask & contact_free_mask
             tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(leader_pos, follower_pos, final_mask)
             
-            if len(tcp_drifts) == 0:
+            if len(tcp_drifts) < 10:
                 continue
                 
             mean_tcp = np.mean(tcp_drifts) * 1000
             std_tcp = np.std(tcp_drifts) * 1000
             mean_rot = np.mean(rot_drifts)
-            temporal_consistency = mean_tcp / std_tcp if std_tcp > 0 else 999
+            n_stable = len(tcp_drifts)
+            temporal_consistency = (mean_tcp / (std_tcp / np.sqrt(n_stable))) if std_tcp > 0 else 999
             
             z_score = (mean_tcp - self.nominal_median_tcp_mm) / (1.4826 * self.nominal_mad_tcp_mm)
             
@@ -187,7 +194,7 @@ class ArchitectureAwareDriftGate:
             is_drift = (
                 z_score > self.z_threshold and
                 (mean_tcp > 40.0 or mean_rot > 8.0) and
-                temporal_consistency > 1.5
+                temporal_consistency > 2.0
             )
             
             if is_drift:
@@ -259,7 +266,7 @@ class ArchitectureAwareDriftGate:
         df = pd.read_parquet(filepath)
 
         unique_episodes = sorted(df["episode_index"].unique())
-        episodes_to_analyze = unique_episodes[:15]
+        episodes_to_analyze = unique_episodes
 
         episode_data = []
         episode_drifts = {}
@@ -289,11 +296,12 @@ class ArchitectureAwareDriftGate:
             tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(actions, states, final_mask)
             episode_drifts[ep_idx] = (actions, states, final_mask)
 
-            if len(tcp_drifts) > 0:
+            if len(tcp_drifts) >= 10:
                 mean_tcp = np.mean(tcp_drifts) * 1000
                 std_tcp = np.std(tcp_drifts) * 1000
                 mean_rot = np.mean(rot_drifts)
-                temporal_consistency = mean_tcp / std_tcp if std_tcp > 0 else 999
+                n_stable = len(tcp_drifts)
+                temporal_consistency = (mean_tcp / (std_tcp / np.sqrt(n_stable))) if std_tcp > 0 else 999
             else:
                 mean_tcp, std_tcp, mean_rot, temporal_consistency = 0.0, 0.0, 0.0, 0.0
 
@@ -323,8 +331,8 @@ class ArchitectureAwareDriftGate:
             # Gate B: Absolute spatial threshold (TCP drift > 40.0mm or orientation > 8.0°)
             is_large_offset = ep["tcp_drift_mm"] > 40.0 or ep["rot_drift"] > 8.0
 
-            # Gate C: Temporal consistency (|mean|/std > 1.5)
-            is_steady_bias = ep["temporal_consistency"] > 1.5
+            # Gate C: Temporal consistency (t-statistic > 2.0)
+            is_steady_bias = ep["temporal_consistency"] > 2.0
 
             is_drift = (
                 z_score > 3.0 and
@@ -345,7 +353,25 @@ class ArchitectureAwareDriftGate:
                         f"Cartesian space calibration failure. "
                         f"TCP Z-score: {z_score:.1f} (value: {ep['tcp_drift_mm']:.1f}mm), "
                         f"Temporal consistency: {ep['temporal_consistency']:.1f}. "
-                        f"Exceeds relative and absolute criteria (z>3.0, TCP>40mm, consist>1.5)."
+                        f"Exceeds relative and absolute criteria (z>3.0, TCP>40mm, consist>2.0)."
+                    ),
+                })
+                continue
+
+            # Gate D: Operator hesitation / stalling
+            actions_ep, states_ep, _ = episode_drifts[ep_idx]
+            reversal_rate = self.compute_direction_reversal_rate(actions_ep)
+            if reversal_rate > self.reversal_threshold_rate:
+                failed_episodes.append({
+                    "episode": f"episode_{ep_idx}",
+                    "error_type": "DIFFUSION_STALL_HESITATION",
+                    "severity": "HIGH",
+                    "metric": f"{reversal_rate:.1f} reversals/100 frames",
+                    "reason": (
+                        f"High-frequency micro-reversals detected "
+                        f"({reversal_rate:.1f}/100 frames vs threshold "
+                        f"{self.reversal_threshold_rate}/100). Operator hesitation "
+                        f"will cause policy models to learn stalling behaviour."
                     ),
                 })
                 continue

@@ -34,6 +34,10 @@ class BimanualForwardKinematics:
         Returns:
             position: [x, y, z] of the TCP (shape (3,) or (N, 3)).
             R: 3x3 orientation rotation matrix (shape (3, 3) or (N, 3, 3)).
+
+        Note: At TCP positions near the base Z-axis (r≈0 in cylindrical coords),
+        the waist angle becomes unobservable from position alone. Position-drift
+        attribution to joint 0 (waist) is unreliable in this configuration.
         """
         joints = np.asarray(joints)
         is_batch = joints.ndim == 2
@@ -206,12 +210,57 @@ class BimanualForwardKinematics:
         """
         Solves FK for bimanual 14-D joint array.
         Supports shape (14,) and batch shape (N, 14).
+        Also accepts 16-D inputs (base velocity prepended); the first 2
+        columns/elements are stripped automatically.
         """
         joints_14d = np.asarray(joints_14d)
         if joints_14d.ndim == 2:
+            d = joints_14d.shape[1]
+            if d == 16:
+                joints_14d = joints_14d[:, 2:16]
+            elif d != 14:
+                raise ValueError(f'Expected 14 or 16 joint dims, got {d}')
             left_pos, left_R = self.solve_arm_fk(joints_14d[:, :7])
             right_pos, right_R = self.solve_arm_fk(joints_14d[:, 7:14])
         else:
+            d = len(joints_14d)
+            if d == 16:
+                joints_14d = joints_14d[2:16]
+            elif d != 14:
+                raise ValueError(f'Expected 14 or 16 joint dims, got {d}')
             left_pos, left_R = self.solve_arm_fk(joints_14d[:7])
             right_pos, right_R = self.solve_arm_fk(joints_14d[7:14])
         return (left_pos, left_R), (right_pos, right_R)
+
+    def validate_zero_pose(self):
+        """
+        Validates FK output at q=[0,0,0,0,0,0,0] against known URDF
+        zero-pose geometry.  Raises ValueError on mismatch.
+        Returns True if all checks pass.
+        """
+        q_zero = np.zeros(7)
+        pos, _ = self.solve_arm_fk(q_zero)
+
+        expected_x = self.L2_x + self.L3_x + self.L4_x + self.L5_x + self.L6_x  # 0.615
+        expected_z = self.L1_z + self.L2_z  # 0.4385
+        expected_y = 0.0
+        tol = 1e-6
+
+        errors = []
+        if abs(pos[0] - expected_x) > tol:
+            errors.append(f'TCP x: expected {expected_x}, got {pos[0]}')
+        if abs(pos[1] - expected_y) > tol:
+            errors.append(f'TCP y: expected {expected_y}, got {pos[1]}')
+        if abs(pos[2] - expected_z) > tol:
+            errors.append(f'TCP z: expected {expected_z}, got {pos[2]}')
+
+        if errors:
+            raise ValueError(
+                'Zero-pose FK validation failed:\n' + '\n'.join(errors)
+            )
+        return True
+
+
+# Self-test: validate FK matches URDF zero-pose on import
+_fk_validator = BimanualForwardKinematics()
+_fk_validator.validate_zero_pose()

@@ -1,10 +1,11 @@
-from fastapi import FastAPI, Depends
+import re
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import Column, String, JSON, DateTime
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 import os
 
@@ -19,7 +20,7 @@ class ResponseModel(database.Base):
     interviewee_name = Column(String, nullable=True)
     company = Column(String, nullable=True)
     answers = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 # Create tables in PostgreSQL (or SQLite locally)
 database.Base.metadata.create_all(bind=database.engine)
@@ -28,6 +29,39 @@ app = FastAPI(title="Verifier Node API")
 
 # Mount the static directory to serve HTML/CSS/JS
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# --- Security: API key auth for diagnostic endpoints ---
+API_KEY = os.environ.get("API_KEY", "")
+
+def verify_api_key(request: Request):
+    """
+    Checks X-API-Key header on protected endpoints.
+    If API_KEY env var is not set, auth is disabled (dev mode).
+    """
+    if not API_KEY:
+        return  # No key configured = dev mode, skip auth
+    key = request.headers.get("X-API-Key", "")
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+# --- Security: SSRF-safe Slack webhook validation ---
+SLACK_WEBHOOK_PATTERN = re.compile(r"^https://hooks\.slack\.com/services/[A-Za-z0-9/]+$")
+
+def validate_slack_webhook(webhook: str = None) -> str:
+    """
+    Returns validated webhook URL or None.
+    Only allows official Slack webhook URLs to prevent SSRF.
+    """
+    if not webhook:
+        return None
+    if not SLACK_WEBHOOK_PATTERN.match(webhook):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid slack_webhook URL. Only https://hooks.slack.com/services/* is allowed."
+        )
+    return webhook
+
 
 # Pydantic schema for incoming requests
 class QuestionnaireSubmission(BaseModel):
@@ -63,31 +97,50 @@ from generate_lerobot_buffer import create_lerobot_buffer_mock
 from lerobot_buffer_hook import ArchitectureAwareDriftGate
 
 @app.get("/api/diagnostic-demo")
-async def run_diagnostic_demo(slack_webhook: str = None):
+def run_diagnostic_demo(
+    request: Request,
+    slack_webhook: str = None,
+    _auth: None = Depends(verify_api_key)
+):
     """
-    V3 Endpoint: Simulates a real-time lerobot-record buffer hook.
+    V3.7 Endpoint: Simulates a real-time lerobot-record buffer hook.
+    Runs synchronously (FastAPI threadpool) to avoid blocking the event loop.
     """
     try:
+        validated_webhook = validate_slack_webhook(slack_webhook)
+
         # Step 1: Generate simulated real-time buffer streams
         episodes = create_lerobot_buffer_mock()
         
         # Step 2: Run the Architecture-Aware Drift Gate on the buffer
-        gate = ArchitectureAwareDriftGate(episodes, slack_webhook=slack_webhook)
+        gate = ArchitectureAwareDriftGate(episodes, slack_webhook=validated_webhook)
         report = gate.analyze()
         
         return {"status": "success", "report": report}
         
+    except HTTPException:
+        raise  # Re-raise validation errors
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/diagnostic-real")
-async def run_diagnostic_real(slack_webhook: str = None):
+def run_diagnostic_real(
+    request: Request,
+    slack_webhook: str = None,
+    _auth: None = Depends(verify_api_key)
+):
     """
     Downloads chunk-000 from HF lerobot/aloha_mobile_cabinet and runs the quality gate on real robot teleop.
+    Runs synchronously (FastAPI threadpool) to avoid blocking the event loop.
     """
     try:
+        validated_webhook = validate_slack_webhook(slack_webhook)
+
         parquet_url = "https://huggingface.co/datasets/lerobot/aloha_mobile_cabinet/resolve/main/data/chunk-000/file-000.parquet"
-        local_path = "static/aloha_mobile_cabinet.parquet"
+        # Cache to data/ directory instead of static/ to prevent public serving
+        data_dir = "data"
+        os.makedirs(data_dir, exist_ok=True)
+        local_path = os.path.join(data_dir, "aloha_mobile_cabinet.parquet")
         
         # Cache the dataset locally so subsequent clicks are instantaneous
         if not os.path.exists(local_path):
@@ -96,10 +149,12 @@ async def run_diagnostic_real(slack_webhook: str = None):
             urllib.request.urlretrieve(parquet_url, local_path)
             print("Download complete.")
             
-        gate = ArchitectureAwareDriftGate(slack_webhook=slack_webhook)
+        gate = ArchitectureAwareDriftGate(slack_webhook=validated_webhook)
         report = gate.analyze_real_parquet(local_path)
         
         return {"status": "success", "report": report}
         
+    except HTTPException:
+        raise  # Re-raise validation errors
     except Exception as e:
         return {"status": "error", "message": str(e)}
