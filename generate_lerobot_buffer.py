@@ -22,9 +22,16 @@ def create_lerobot_buffer_mock():
         # Base trajectory: smooth sine wave to simulate reaching task
         t = np.linspace(0, 2*np.pi, frames_per_episode)
         base_trajectory = np.sin(t)[:, np.newaxis] * np.ones((1, num_joints))
+        # Add a 20-frame static hold at the end to guarantee stable frames for the gate
+        base_trajectory = np.vstack([base_trajectory, np.tile(base_trajectory[-1], (20, 1))])
+        total_frames = frames_per_episode + 20
         
-        leader_pos = base_trajectory + np.random.normal(0, 0.001, (frames_per_episode, num_joints))
-        follower_pos = base_trajectory + np.random.normal(0, 0.001, (frames_per_episode, num_joints))
+        leader_pos = base_trajectory + np.random.normal(0, 0.001, (total_frames, num_joints))
+        follower_pos = base_trajectory + np.random.normal(0, 0.001, (total_frames, num_joints))
+        
+        # Ensure grippers are open so frames aren't excluded by the contact filter
+        leader_pos[:, [6, 13]] = 1.0
+        follower_pos[:, [6, 13]] = 1.0
         
         metadata = {"type": "CLEAN"}
         
@@ -37,7 +44,7 @@ def create_lerobot_buffer_mock():
         # Inject Diffusion Stall (Direction Reversal) into Episode 42
         if i == 42:
             # Operator hesitates, creating high-frequency micro-reversals
-            stall_noise = np.sin(np.linspace(0, 100*np.pi, frames_per_episode)) * 0.05
+            stall_noise = np.sin(np.linspace(0, 100*np.pi, total_frames)) * 0.05
             leader_pos[:, 4] += stall_noise
             follower_pos[:, 4] += stall_noise
             metadata["type"] = "DIFFUSION_STALL"

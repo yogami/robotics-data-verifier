@@ -179,6 +179,17 @@ class ArchitectureAwareDriftGate:
             final_mask = stable_mask & contact_free_mask
             tcp_drifts, rot_drifts = self.compute_cartesian_drift_series(leader_pos, follower_pos, final_mask)
             
+            reversal_rate = self.compute_direction_reversal_rate(leader_pos)
+            if reversal_rate > self.reversal_threshold_rate:
+                failed_episodes.append({
+                    "episode": ep_id,
+                    "error_type": "DIFFUSION_STALL_HESITATION",
+                    "severity": "HIGH",
+                    "metric": f"{reversal_rate:.1f} reversals/100 frames",
+                    "reason": f"High-frequency micro-reversals detected ({reversal_rate:.1f}/100 frames vs threshold {self.reversal_threshold_rate}/100). Operator hesitation will cause Diffusion Policy and ACT models to learn stalling behaviour."
+                })
+                continue
+                
             if len(tcp_drifts) < 10:
                 continue
                 
@@ -206,17 +217,7 @@ class ArchitectureAwareDriftGate:
                     "reason": f"Cartesian calibration offset detected. Z-score {z_score:.1f} (exceeds threshold {self.z_threshold}). TCP drift of {mean_tcp:.1f}mm violates baseline limit (40mm) with consistency {temporal_consistency:.1f}."
                 })
                 continue
-                
-            reversal_rate = self.compute_direction_reversal_rate(leader_pos)
-            if reversal_rate > self.reversal_threshold_rate:
-                failed_episodes.append({
-                    "episode": ep_id,
-                    "error_type": "DIFFUSION_STALL_HESITATION",
-                    "severity": "HIGH",
-                    "metric": f"{reversal_rate:.1f} reversals/100 frames",
-                    "reason": f"High-frequency micro-reversals detected ({reversal_rate:.1f}/100 frames vs threshold {self.reversal_threshold_rate}/100). Operator hesitation will cause Diffusion Policy and ACT models to learn stalling behaviour."
-                })
-                continue
+
 
         slack_status = "NOT_TRIGGERED"
         if failed_episodes and self.slack_webhook:
