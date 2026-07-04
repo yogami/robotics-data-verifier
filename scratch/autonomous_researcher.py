@@ -15,6 +15,7 @@ REPO_OWNER = os.environ.get("REPO_OWNER", "yamijala")
 REPO_NAME = os.environ.get("REPO_NAME", "robotics-data-verifier")
 HF_REPO = os.environ.get("HF_REPO", "yamijala/aloha-act-sweep")
 RUNPOD_IP = os.environ.get("RUNPOD_IP")
+RUNPOD_PORT = os.environ.get("RUNPOD_PORT", "22")
 
 # Setup SQLite Database for Multi-Day State Management
 def init_db():
@@ -84,7 +85,10 @@ def run_ssh_training(infection, seed):
         raise ValueError("RUNPOD_IP environment variable not set.")
     
     branch_name = f"run_infected_{infection}_seed_{seed}"
-    print(f"SSH: Starting training run on RunPod ({RUNPOD_IP}) for {branch_name}...")
+    print(f"SSH: Starting training run on RunPod ({RUNPOD_IP}:{RUNPOD_PORT}) for {branch_name}...")
+    
+    # Common SSH prefix to support exposed TCP ports on cloud containers
+    ssh_prefix = f"ssh -o StrictHostKeyChecking=no -p {RUNPOD_PORT} root@{RUNPOD_IP}"
     
     # Capture current local Git commit SHA at training time T1 to pin codebase
     commit_sha = subprocess.check_output("git rev-parse HEAD", shell=True).decode('utf-8').strip()
@@ -93,7 +97,7 @@ def run_ssh_training(infection, seed):
     # 1. Force Git clone and checkout the exact audited commit on RunPod
     print("SSH: Cloning trusted training code from GitHub and checking out commit...")
     cmd_clone = (
-        f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} "
+        f"{ssh_prefix} "
         f"\"rm -rf /root/robotics-data-verifier && "
         f"git clone https://github.com/{REPO_OWNER}/{REPO_NAME}.git /root/robotics-data-verifier && "
         f"cd /root/robotics-data-verifier && git checkout -q {commit_sha}\""
@@ -101,7 +105,7 @@ def run_ssh_training(infection, seed):
     subprocess.run(cmd_clone, shell=True, check=True)
     
     # Kill any leftover training/watchdog processes from previous failed runs
-    cleanup_cmd = f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} \"pkill -f train_bc_policy.py || true; pkill -f runpod_watchdog.py || true\""
+    cleanup_cmd = f"{ssh_prefix} \"pkill -f train_bc_policy.py || true; pkill -f runpod_watchdog.py || true\""
     subprocess.run(cleanup_cmd, shell=True)
     
     # 2. Launch training in the background and capture the PID
@@ -111,7 +115,7 @@ def run_ssh_training(infection, seed):
     eval_output = f"/root/outputs/eval.json"
     
     cmd_train = (
-        f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} "
+        f"{ssh_prefix} "
         f"\"nohup python3 /root/robotics-data-verifier/train_bc_policy.py "
         f"--parquet {parquet_path} --output-model {model_output} --output-eval {eval_output} "
         f"--epochs 100 --hf-repo {HF_REPO} --hf-token \\$HF_TOKEN --hf-branch {branch_name} "
@@ -124,7 +128,7 @@ def run_ssh_training(infection, seed):
     # 3. Start the watchdog script to monitor the training process and get its exact PID
     print("SSH: Launching runpod_watchdog.py budget guard...")
     cmd_watchdog = (
-        f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} "
+        f"{ssh_prefix} "
         f"\"nohup python3 /root/robotics-data-verifier/scratch/runpod_watchdog.py /root/train.log {pid} "
         f"> /root/watchdog.log 2>&1 & echo \\$!\""
     )
@@ -134,31 +138,31 @@ def run_ssh_training(infection, seed):
     # 4. Monitor the process until complete, with active watchdog liveness checks
     print("SSH: Monitoring training process and watchdog liveness...")
     while True:
-        check_cmd = f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} \"kill -0 {pid} 2>/dev/null && echo 'ALIVE' || echo 'DEAD'\""
+        check_cmd = f"{ssh_prefix} \"kill -0 {pid} 2>/dev/null && echo 'ALIVE' || echo 'DEAD'\""
         status = subprocess.check_output(check_cmd, shell=True).decode('utf-8').strip()
         if status == "DEAD":
             break
             
         # Watchdog liveness check: if training is alive, watchdog MUST be alive
-        wd_check = f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} \"kill -0 {wd_pid} 2>/dev/null && echo 'ALIVE' || echo 'DEAD'\""
+        wd_check = f"{ssh_prefix} \"kill -0 {wd_pid} 2>/dev/null && echo 'ALIVE' || echo 'DEAD'\""
         wd_status = subprocess.check_output(wd_check, shell=True).decode('utf-8').strip()
         if wd_status == "DEAD":
             # Kill training to protect budget if watchdog dies unexpectedly
-            kill_cmd = f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} \"kill -9 {pid} 2>/dev/null\""
+            kill_cmd = f"{ssh_prefix} \"kill -9 {pid} 2>/dev/null\""
             subprocess.run(kill_cmd, shell=True)
             raise RuntimeError("Watchdog process died unexpectedly during training. Training was aborted.")
             
         time.sleep(10)
         
     # Check if watchdog killed the run
-    watchdog_check = f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} \"grep -q 'KILLED' /root/watchdog.log && echo 'KILLED' || echo 'OK'\""
+    watchdog_check = f"{ssh_prefix} \"grep -q 'KILLED' /root/watchdog.log && echo 'KILLED' || echo 'OK'\""
     watchdog_status = subprocess.check_output(watchdog_check, shell=True).decode('utf-8').strip()
     if watchdog_status == "KILLED":
         raise RuntimeError("Training was terminated by watchdog due to exploding/NaN loss.")
         
     # Extract the Hugging Face commit SHA from the train logs
     print("SSH: Extracting Hugging Face upload commit SHA...")
-    extract_cmd = f"ssh -o StrictHostKeyChecking=no root@{RUNPOD_IP} \"grep -o 'HF_COMMIT_SHA=[a-f0-9]\\+' /root/train.log || true\""
+    extract_cmd = f"{ssh_prefix} \"grep -o 'HF_COMMIT_SHA=[a-f0-9]\\+' /root/train.log || true\""
     commit_line = subprocess.check_output(extract_cmd, shell=True).decode('utf-8').strip()
     
     # Split lines and select the last match (the most recent commit)
