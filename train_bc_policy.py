@@ -181,6 +181,7 @@ def train(parquet_path: str, episode_ids: list[int] | None, output_path: str,
         try:
             from huggingface_hub import HfApi
             api = HfApi(token=hf_token)
+            api.create_repo(repo_id=hf_repo, exist_ok=True)
             api.create_branch(repo_id=hf_repo, branch=hf_branch, exist_ok=True)
             commit_info = api.upload_file(
                 path_or_fileobj=output_path,
