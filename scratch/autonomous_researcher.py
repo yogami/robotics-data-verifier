@@ -101,7 +101,8 @@ def run_ssh_training(infection, seed):
         f"\"rm -rf /root/robotics-data-verifier && "
         f"git clone https://{GITHUB_PAT}@github.com/{REPO_OWNER}/{REPO_NAME}.git /root/robotics-data-verifier && "
         f"cd /root/robotics-data-verifier && git checkout -q {commit_sha} && "
-        f"pip install --no-cache-dir pandas pyarrow huggingface-hub pyyaml\""
+        f"pip install --no-cache-dir pandas pyarrow huggingface-hub pyyaml && "
+        f"cat /proc/1/environ | tr '\\\\0' '\\\\n' | grep '^HF_TOKEN=' >> /etc/environment || true\""
     )
     subprocess.run(cmd_clone, shell=True, check=True)
     
