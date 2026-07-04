@@ -76,6 +76,7 @@ jobs:
           hf_repo = '${{ github.event.inputs.huggingface_repo }}'
           revision = '${{ github.event.inputs.hf_revision }}'
           token = os.environ.get('HF_TOKEN')
+          token = token if token else None
           print(f'Downloading from {hf_repo} revision {revision}...')
           hf_hub_download(
               repo_id=hf_repo,
