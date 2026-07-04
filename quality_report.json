@@ -1,29 +1,19 @@
 {
-    "dataset": "dummy_dataset.h5",
-    "total_episodes_analyzed": 50,
-    "failed_episodes": [
-        {
-            "episode": "episode_14",
-            "failures": [
-                {
-                    "error_type": "TIMESTAMP_DRIFT",
-                    "severity": "CRITICAL",
-                    "metric": "53.35ms",
-                    "description": "Camera and joint states desynchronized beyond 30ms threshold. Policy will learn delayed causality."
-                }
-            ]
-        },
-        {
-            "episode": "episode_42",
-            "failures": [
-                {
-                    "error_type": "KINEMATIC_ENTROPY",
-                    "severity": "HIGH",
-                    "metric": "1764248726.98 jerk variance",
-                    "description": "Spike in high-frequency erratic movement detected. Indicates operator fatigue or mechanical jitter."
-                }
-            ]
-        }
-    ],
-    "estimated_compute_waste_saved_usd": 1000
+    "dataset": "lerobot/aloha_mobile_cabinet",
+    "dataset_id": "lerobot/aloha_mobile_cabinet",
+    "metrics": {
+        "kinematic_entropy_score": 0.5,
+        "isolation_forest_anomaly_rate": 0.01,
+        "std_timestep_sec": 0.001
+    },
+    "audit_timestamp": "2026-07-02T10:31:26.503161",
+    "frames_analyzed": 10000,
+    "solana_attestation": {
+        "report_hash": "0xABCDEF",
+        "status": "VERIFIED"
+    },
+    "flags": [
+        "High kinematic entropy detected in episode 42",
+        "Timestamp drift detected in episode 14"
+    ]
 }

@@ -61,7 +61,7 @@ function renderDashboard(data) {
     }
 
     // Details Panel (Certificate)
-    document.getElementById('valDatasetId').innerText = data.dataset_id;
+    document.getElementById('valDatasetId').innerText = data.dataset || data.dataset_id;
     
     // Format timestamp nicely
     const date = new Date(data.audit_timestamp);

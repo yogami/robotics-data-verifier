@@ -33,8 +33,20 @@ class BCPolicyWrapper:
         # obs_dict contains tensors of shape (1, 14) or similar
         obs = obs_dict.get("agent_pos")
         if obs is None:
+            obs = obs_dict.get("state")
+        if obs is None:
             # Fallback if other keys are used
             obs = next(iter(obs_dict.values()))
+            
+        expected_dim = self.model.net[0].in_features
+        if obs.shape[-1] != expected_dim:
+            if obs.shape[-1] == 16 and expected_dim == 14:
+                obs = obs[:, 2:16]
+            elif obs.shape[-1] == 14 and expected_dim == 16:
+                obs = torch.cat([torch.zeros((obs.shape[0], 2), device=obs.device), obs], dim=-1)
+            else:
+                raise ValueError(f"Shape mismatch: model expects {expected_dim} but obs has {obs.shape[-1]}")
+                
         return self.model(obs.to(self.device))
 def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=400, device="cuda", infection_level=0, seed=1001):
     # Monkeypatch physics render to bypass actual OpenGL software rendering

@@ -91,14 +91,17 @@ def verify_log(json_path: str, manifest_path: str, phase: str, infection_level: 
         run_config = data.get("config", {})
         if "infection_level" not in run_config or "seed" not in run_config:
             log_ledger({"path": canonical_path, "phase": phase, "infection": infection_level, "seed": seed, "hash": file_hash, "status": "FAILED_MISSING_METADATA", "manifest_hash": manifest_hash}, private_key_pem)
+            print("Cryptographic Verification Failed: FAILED_MISSING_METADATA")
             sys.exit(1)
             
         if run_config["infection_level"] != infection_level:
             log_ledger({"path": canonical_path, "phase": phase, "infection": infection_level, "seed": seed, "hash": file_hash, "status": "FAILED_MISMATCH_INFECTION", "manifest_hash": manifest_hash}, private_key_pem)
+            print(f"Cryptographic Verification Failed: FAILED_MISMATCH_INFECTION (Expected {infection_level}, got {run_config['infection_level']})")
             sys.exit(1)
             
         if run_config["seed"] != seed:
             log_ledger({"path": canonical_path, "phase": phase, "infection": infection_level, "seed": seed, "hash": file_hash, "status": "FAILED_MISMATCH_SEED", "manifest_hash": manifest_hash}, private_key_pem)
+            print(f"Cryptographic Verification Failed: FAILED_MISMATCH_SEED (Expected {seed}, got {run_config['seed']})")
             sys.exit(1)
             
         # Provenance binding verification: check dataset hash matches pre-registered manifest hash
@@ -109,12 +112,14 @@ def verify_log(json_path: str, manifest_path: str, phase: str, infection_level: 
         config_dataset_hash = run_config.get("dataset_hash")
         if not expected_dataset_hash or config_dataset_hash != expected_dataset_hash:
             log_ledger({"path": canonical_path, "phase": phase, "infection": infection_level, "seed": seed, "hash": file_hash, "status": "FAILED_MISMATCH_DATA_HASH", "manifest_hash": manifest_hash}, private_key_pem)
+            print(f"Cryptographic Verification Failed: FAILED_MISMATCH_DATA_HASH (Expected {expected_dataset_hash}, got {config_dataset_hash})")
             sys.exit(1)
             
         target_episodes = manifest.get("evaluation", {}).get("episodes_per_model", 500)
         episodes = data.get("episodes")
         
         if not episodes or len(episodes) != target_episodes:
+            print(f"Cryptographic Verification Failed: Mismatch in episodes. Expected {target_episodes}, got {len(episodes) if episodes else 0}")
             sys.exit(1)
             
         successes = sum(1 for e in episodes if e.get("success", False))
@@ -127,6 +132,7 @@ def verify_log(json_path: str, manifest_path: str, phase: str, infection_level: 
                 log_ledger({"path": canonical_path, "phase": phase, "infection": infection_level, "seed": seed, "hash": file_hash, "status": "PASSED", "manifest_hash": manifest_hash}, private_key_pem)
                 sys.exit(0)
             else:
+                print(f"Cryptographic Verification Failed: Baseline check did not meet target. lo={lo} target={target/100.0}")
                 sys.exit(1)
                 
         elif phase == "sweep_logging":
