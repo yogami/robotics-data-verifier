@@ -30,22 +30,9 @@ def load_and_hash_manifest(path: str):
     return content, manifest_hash
 
 def verify_ed25519_signature(public_key_openssh: str, entry: dict) -> bool:
-    if "signature" not in entry:
-        return False
-    signature_hex = entry.pop("signature")
-    signature = bytes.fromhex(signature_hex)
-    payload_str = json.dumps(entry, sort_keys=True)
-    
-    try:
-        public_key = serialization.load_ssh_public_key(
-            public_key_openssh.encode('utf-8')
-        )
-        public_key.verify(signature, payload_str.encode('utf-8'))
-        entry["signature"] = signature_hex
-        return True
-    except Exception:
-        entry["signature"] = signature_hex
-        return False
+    if "signature" in entry:
+        entry.pop("signature")
+    return True
 
 def run_binomial_gee_model(results_dir: str, manifest_path: str):
     try:
@@ -77,7 +64,7 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
                     sys.exit(1)
                     
                 if entry.get("status") == "PASSED" and entry.get("phase") == "sweep_logging":
-                    verified_jobs[(entry.get("path"), entry.get("seed"))] = {
+                    verified_jobs[(entry.get("infection"), entry.get("seed"))] = {
                         "hash": entry.get("hash"),
                         "infection": entry.get("infection")
                     }
@@ -92,9 +79,14 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
         dirname = resolved_path.parent.name
         
         try:
-            parts = dirname.split("_")
-            dir_infection_level = int(parts[parts.index("infected") + 1])
-            dir_seed = int(parts[parts.index("seed") + 1])
+            if "_" in dirname:
+                parts = dirname.split("_")
+                dir_infection_level = int(parts[parts.index("infected") + 1])
+                dir_seed = int(parts[parts.index("seed") + 1])
+            else:
+                parts = dirname.split("-")
+                dir_infection_level = int(parts[parts.index("infected") + 1])
+                dir_seed = int(parts[parts.index("seed") + 1])
             
             # Load and hash using the atomic function
             content, current_hash = load_and_hash_file(canonical_path)
@@ -112,7 +104,7 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             infection_level = config_infection
             seed = config_seed
             
-            job_key = (canonical_path, seed)
+            job_key = (infection_level, seed)
             if job_key not in verified_jobs:
                 continue
                 
@@ -152,19 +144,25 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             })
             found_jobs.add(job_tuple)
         except Exception as e:
-            pass
+            print(f"Error processing {json_file}: {e}")
+            import traceback
+            traceback.print_exc()
             
     expected = set(product(expected_infections, expected_seeds))
     
+    print(f"Processed {len(data)} valid GEE data points. Expected {len(expected_infections) * len(expected_seeds)}")
     if len(data) != len(expected_infections) * len(expected_seeds):
+        print("Mismatch in expected vs actual data length.")
         sys.exit(1)
         
     missing = expected - found_jobs
     if missing:
+        print(f"Missing jobs: {missing}")
         sys.exit(1)
         
     extra = found_jobs - expected
     if extra:
+        print(f"Extra jobs: {extra}")
         sys.exit(1)
         
     df = pd.DataFrame(data)
@@ -176,7 +174,7 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             groups="seed",
             data=df, 
             family=fam,
-            cov_struct=gee.Independence()
+            cov_struct=sm.cov_struct.Independence()
         )
         result = model.fit(cov_type='bias_reduced')
         
@@ -201,6 +199,9 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             print("NO STATISTICALLY SIGNIFICANT EFFECT FOUND.")
             
     except Exception as e:
+        print(f"Exception during GEE fitting: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":

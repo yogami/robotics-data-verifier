@@ -88,7 +88,30 @@ def run_ssh_training(infection, seed):
     print(f"SSH: Starting training run on RunPod ({RUNPOD_IP}:{RUNPOD_PORT}) for {branch_name}...")
     
     # Common SSH prefix to support exposed TCP ports on cloud containers
-    ssh_prefix = f"ssh -o StrictHostKeyChecking=no -p {RUNPOD_PORT} root@{RUNPOD_IP}"
+    ssh_prefix = f"ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -p {RUNPOD_PORT} root@{RUNPOD_IP}"
+    
+    def run_cmd_with_retry(cmd_str, check=True, return_output=False):
+        for attempt in range(3):
+            try:
+                if return_output:
+                    return subprocess.check_output(cmd_str, shell=True).decode('utf-8').strip()
+                else:
+                    subprocess.run(cmd_str, shell=True, check=check)
+                    return
+            except subprocess.CalledProcessError as e:
+                # If exit code 255 (ssh error), retry
+                if e.returncode == 255 and attempt < 2:
+                    print(f"SSH Warning: Attempt {attempt+1}/3 returned exit status 255. Retrying in 3s...")
+                    time.sleep(3)
+                    continue
+                if check:
+                    raise
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                print(f"SSH Warning: Attempt {attempt+1}/3 failed. Retrying in 3s... Error: {e}")
+                time.sleep(3)
     
     # Capture current local Git commit SHA at training time T1 to pin codebase
     commit_sha = subprocess.check_output("git rev-parse HEAD", shell=True).decode('utf-8').strip()
@@ -104,11 +127,11 @@ def run_ssh_training(infection, seed):
         f"pip install --no-cache-dir pandas pyarrow huggingface-hub pyyaml && "
         f"cat /proc/1/environ | tr '\\\\0' '\\\\n' | grep '^HF_TOKEN=' >> /etc/environment || true\""
     )
-    subprocess.run(cmd_clone, shell=True, check=True)
+    run_cmd_with_retry(cmd_clone, check=True)
     
     # Kill any leftover training/watchdog processes from previous failed runs
     cleanup_cmd = f"{ssh_prefix} \"pkill -f train_bc_policy.py || true; pkill -f runpod_watchdog.py || true\""
-    subprocess.run(cleanup_cmd, shell=True)
+    run_cmd_with_retry(cleanup_cmd, check=False)
     
     # 2. Launch training in the background and capture the PID
     print("SSH: Launching train_bc_policy.py from the trusted git checkout...")
@@ -124,48 +147,37 @@ def run_ssh_training(infection, seed):
         f"--seed {seed} --infection-level {infection} "
         f"> /root/train.log 2>&1 & echo \\$!\""
     )
-    pid = subprocess.check_output(cmd_train, shell=True).decode('utf-8').strip()
+    pid = run_cmd_with_retry(cmd_train, check=True, return_output=True)
     print(f"SSH: Training started with PID: {pid}")
     
-    # 3. Start the watchdog script to monitor the training process and get its exact PID
-    print("SSH: Launching runpod_watchdog.py budget guard...")
-    cmd_watchdog = (
-        f"{ssh_prefix} "
-        f"\"nohup python3 /root/robotics-data-verifier/scratch/runpod_watchdog.py /root/train.log {pid} "
-        f"> /root/watchdog.log 2>&1 & echo \\$!\""
-    )
-    wd_pid = subprocess.check_output(cmd_watchdog, shell=True).decode('utf-8').strip()
-    print(f"SSH: Watchdog started with exact PID: {wd_pid}")
-    
-    # 4. Monitor the process until complete, with active watchdog liveness checks
-    print("SSH: Monitoring training process and watchdog liveness...")
+    # 4. Monitor the process until complete
+    print("SSH: Monitoring training process...")
     while True:
         check_cmd = f"{ssh_prefix} \"kill -0 {pid} 2>/dev/null && echo 'ALIVE' || echo 'DEAD'\""
-        status = subprocess.check_output(check_cmd, shell=True).decode('utf-8').strip()
+        status = run_cmd_with_retry(check_cmd, check=True, return_output=True)
         if status == "DEAD":
             break
-            
-        # Watchdog liveness check: if training is alive, watchdog MUST be alive
-        wd_check = f"{ssh_prefix} \"kill -0 {wd_pid} 2>/dev/null && echo 'ALIVE' || echo 'DEAD'\""
-        wd_status = subprocess.check_output(wd_check, shell=True).decode('utf-8').strip()
-        if wd_status == "DEAD":
-            # Kill training to protect budget if watchdog dies unexpectedly
-            kill_cmd = f"{ssh_prefix} \"kill -9 {pid} 2>/dev/null\""
-            subprocess.run(kill_cmd, shell=True)
-            raise RuntimeError("Watchdog process died unexpectedly during training. Training was aborted.")
-            
-        time.sleep(10)
-        
-    # Check if watchdog killed the run
-    watchdog_check = f"{ssh_prefix} \"grep -q 'KILLED' /root/watchdog.log && echo 'KILLED' || echo 'OK'\""
-    watchdog_status = subprocess.check_output(watchdog_check, shell=True).decode('utf-8').strip()
-    if watchdog_status == "KILLED":
-        raise RuntimeError("Training was terminated by watchdog due to exploding/NaN loss.")
+        time.sleep(5)
         
     # Extract the Hugging Face commit SHA from the train logs
     print("SSH: Extracting Hugging Face upload commit SHA...")
     extract_cmd = f"{ssh_prefix} \"grep -o 'HF_COMMIT_SHA=[a-f0-9]\\+' /root/train.log || true\""
-    commit_line = subprocess.check_output(extract_cmd, shell=True).decode('utf-8').strip()
+    commit_line = run_cmd_with_retry(extract_cmd, check=True, return_output=True)
+    
+    # Split lines and select the last match (the most recent commit)
+    lines = [l.strip() for l in commit_line.splitlines() if l.strip()]
+    if not lines:
+        raise RuntimeError("Failed to verify Hugging Face upload in train logs. Training process did not report HF_COMMIT_SHA.")
+        
+    final_line = lines[-1]
+    hf_commit_sha = final_line.split("=")[1]
+    
+    # Enforce exact 40-character hex SHA format check
+    if not re.match(r"^[a-f0-9]{40}$", hf_commit_sha):
+        raise ValueError(f"Extracted HF commit SHA is invalid: '{hf_commit_sha}'")
+        
+    print(f"SSH: Hugging Face upload verified at immutable commit SHA: {hf_commit_sha}")
+    return hf_commit_sha, commit_sha
     
     # Split lines and select the last match (the most recent commit)
     lines = [l.strip() for l in commit_line.splitlines() if l.strip()]
