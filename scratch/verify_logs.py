@@ -10,11 +10,27 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 def get_ed25519_signature(private_key_pem: str, payload_dict: dict) -> str:
+    private_key_pem = private_key_pem.strip()
+    if not private_key_pem.startswith("-----BEGIN"):
+        # GitHub secrets sometimes strip newlines or the user only uploaded the base64 part
+        # Attempt to wrap it in the standard PKCS8 PEM header
+        private_key_pem = f"-----BEGIN PRIVATE KEY-----\n{private_key_pem}\n-----END PRIVATE KEY-----"
+        
     # Load private key
-    private_key = serialization.load_pem_private_key(
-        private_key_pem.encode('utf-8'),
-        password=None
-    )
+    try:
+        private_key = serialization.load_pem_private_key(
+            private_key_pem.encode('utf-8'),
+            password=None
+        )
+    except ValueError as e:
+        if "no BEGIN/END delimiters for a private key found" in str(e):
+            # Might be an OpenSSH key
+            private_key = serialization.load_ssh_private_key(
+                private_key_pem.encode('utf-8'),
+                password=None
+            )
+        else:
+            raise
     # Deterministic JSON string for signing
     payload_str = json.dumps(payload_dict, sort_keys=True)
     signature = private_key.sign(payload_str.encode('utf-8'))
