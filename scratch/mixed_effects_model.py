@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 # Hardcoded public key for verification (cannot be used to forge)
-EVAL_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKi9Jwew2KWOMAq/uSlHn0EZkuwrQ9qTgBta5GxQs3LN"
+EVAL_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGE4kanVm+/6sxEo8OeipYK9i8lNbJKPZfrpUfN+4lUx"
 
 def load_and_hash_file(path: str):
     # TOCTOU Fix: Read bytes once, hash, and return parsed JSON content
