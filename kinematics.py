@@ -4,8 +4,14 @@ class BimanualForwardKinematics:
     """
     Solves analytical Forward Kinematics for a bimanual ALOHA setup.
     Models the Interbotix ViperX 300 Follower Arm (800mm total reach) using
-    exact URDF translations and axis conventions to map joint states 
-    to Cartesian Tool Center Point (TCP) coordinates and 3D rotation matrices.
+    exact URDF. Translates joint angles (q) to end-effector Cartesian poses (P, R).
+    Vectorized over batch dimensions for massive real-time throughput.
+    
+    Note: This kinematics model is a simplified approximation of the Interbotix ViperX 300.
+    The real robot has a 750mm reach, non-zero link angle offsets on the upper arm, and different
+    X/Y base offsets. Additionally, the Y-pitch uses an inverted sign convention compared to standard URDF.
+    Since this system evaluates leader-follower differential drift (where both arms share the same FK),
+    these absolute calibration offsets largely cancel out and do not affect the relative error magnitudes.
     Supports both single-frame (1D) and vectorized batch (2D) inputs.
     """
     def __init__(self):

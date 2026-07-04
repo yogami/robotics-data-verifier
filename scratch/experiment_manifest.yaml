@@ -1,0 +1,49 @@
+# experiment_manifest.yaml
+# PRE-REGISTERED EXPERIMENTAL DESIGN
+
+experiment_name: "ACT_Operator_Hesitation_Sweep"
+
+# The orchestrator is not permitted to modify this manifest.
+# Verification secret key is stored in GitHub Secrets and read via env vars.
+
+hyperparameter_search_space:
+  learning_rate:
+    type: "choice"
+    values: [1e-5, 5e-5, 1e-4]
+  batch_size:
+    type: "choice"
+    values: [8, 16, 32]
+  chunk_size:
+    type: "choice"
+    values: [50, 100]
+  training_steps:
+    type: "fixed"
+    value: 200000
+
+baseline_target_success_rate: 50.0
+
+conditions:
+  infection_levels: [0, 25, 50, 75, 100]
+  seeds: [1001, 2002, 3003, 4004, 5005]
+  exploratory_seeds: [9001, 9002, 9003]
+  total_training_jobs: 25
+
+evaluation:
+  episodes_per_model: 500
+  success_metric: "recomputed_from_episodes"
+
+analysis_plan:
+  family: "binomial"
+  link: "logit"
+  predictor: "linear"
+  cov_type: "bias_reduced"
+  alpha_threshold: 0.05
+  aggregation: "model_level_25_rows"
+
+# Cryptographically bound dataset hashes for training provenance verification
+dataset_hashes:
+  0: "b444be211b70c771aca98468b2503a72b0ca214dce3038a96bfc9e525b4094d3"
+  25: "cd909c7d5f793a9c45fb5c7a496ee423084b2541cbe52be59822c4780d3732f9"
+  50: "79dfceb99d03d2c1213942d33718c363a06038a3c2014ee590d98246a1c3bb60"
+  75: "e0e9164c5ac3ad2f6ea9ea63bea2a77a9a6bfeb846803c41b242ecf04152682f"
+  100: "2750b7367b61d1b7757ec0233525546da6d589c109c20ed94ca40d60fd512761"

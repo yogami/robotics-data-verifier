@@ -7,6 +7,7 @@ from sqlalchemy import Column, String, JSON, DateTime
 from pydantic import BaseModel
 from datetime import datetime, timezone
 import uuid
+import secrets
 import os
 
 import database
@@ -36,12 +37,11 @@ API_KEY = os.environ.get("API_KEY", "")
 def verify_api_key(request: Request):
     """
     Checks X-API-Key header on protected endpoints.
-    If API_KEY env var is not set, auth is disabled (dev mode).
     """
     if not API_KEY:
-        return  # No key configured = dev mode, skip auth
+        raise HTTPException(status_code=500, detail="Server misconfiguration: API_KEY not set")
     key = request.headers.get("X-API-Key", "")
-    if key != API_KEY:
+    if not secrets.compare_digest(key, API_KEY):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
@@ -121,7 +121,7 @@ def run_diagnostic_demo(
     except HTTPException:
         raise  # Re-raise validation errors
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/diagnostic-real")
 def run_diagnostic_real(
@@ -157,4 +157,4 @@ def run_diagnostic_real(
     except HTTPException:
         raise  # Re-raise validation errors
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
