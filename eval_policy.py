@@ -92,6 +92,13 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
     successes = 0
     episodes_data = []
     
+    def to_tensor(x):
+        if isinstance(x, dict):
+            return {k: to_tensor(v) for k, v in x.items()}
+        if isinstance(x, np.ndarray):
+            return torch.from_numpy(x).to(device).unsqueeze(0)
+        return x
+
     for ep in tqdm(range(n_episodes), desc="Evaluating"):
         observation, info = env.reset()
         policy.reset()
@@ -101,10 +108,7 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
         ep_max_reward = 0.0
         
         while not done and step < max_steps:
-            obs_tensor = {
-                k: torch.from_numpy(v).to(device).unsqueeze(0) 
-                for k, v in observation.items()
-            }
+            obs_tensor = to_tensor(observation)
             
             with torch.no_grad():
                 action_tensor = policy.select_action(obs_tensor)
