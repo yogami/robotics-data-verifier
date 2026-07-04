@@ -37,6 +37,21 @@ class BCPolicyWrapper:
             obs = next(iter(obs_dict.values()))
         return self.model(obs.to(self.device))
 def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=400, device="cuda", infection_level=0, seed=1001):
+    # Monkeypatch physics render to bypass actual OpenGL software rendering
+    # since we only use state (agent_pos) inputs.
+    try:
+        from dm_control.mujoco.engine import Physics
+        def dummy_render(self, height=240, width=320, camera_id=-1, scene_option=None, depth=False, segmentation=False):
+            if depth:
+                return np.zeros((height, width), dtype=np.float32)
+            if segmentation:
+                return np.zeros((height, width, 2), dtype=np.int32)
+            return np.zeros((height, width, 3), dtype=np.uint8)
+        Physics.render = dummy_render
+        print("Successfully monkeypatched dm_control.mujoco.engine.Physics.render!")
+    except Exception as e:
+        print(f"Could not monkeypatch dm_control: {e}")
+
     import gymnasium as gym
     import gym_aloha  # noqa: F401
     env = gym.make(
