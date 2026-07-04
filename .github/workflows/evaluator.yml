@@ -70,11 +70,21 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # The checkpoint is downloaded strictly from the immutable commit SHA revision.
-          # This prevents weight swapping or branch force-pushing by the Executor.
-          huggingface-cli download ${{ github.event.inputs.huggingface_repo }} \
-            --revision ${{ github.event.inputs.hf_revision }} \
-            --local-dir checkpoint
+          python -c "
+          from huggingface_hub import hf_hub_download
+          import os
+          hf_repo = '${{ github.event.inputs.huggingface_repo }}'
+          revision = '${{ github.event.inputs.hf_revision }}'
+          token = os.environ.get('HF_TOKEN')
+          print(f'Downloading from {hf_repo} revision {revision}...')
+          hf_hub_download(
+              repo_id=hf_repo,
+              filename='bc_model.pt',
+              revision=revision,
+              local_dir='checkpoint',
+              token=token
+          )
+          "
           
       - name: Run Evaluation
         # We run the actual evaluation script in CPU mode (headless)
