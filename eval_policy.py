@@ -96,7 +96,10 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
         if isinstance(x, dict):
             return {k: to_tensor(v) for k, v in x.items()}
         if isinstance(x, np.ndarray):
-            return torch.from_numpy(x).to(device).unsqueeze(0)
+            t = torch.from_numpy(x).to(device).unsqueeze(0)
+            if t.is_floating_point():
+                t = t.float()
+            return t
         return x
 
     for ep in tqdm(range(n_episodes), desc="Evaluating"):
