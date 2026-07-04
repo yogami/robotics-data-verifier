@@ -64,7 +64,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install gym-aloha==0.1.1 cryptography pyyaml statsmodels
+          pip install torch gym-aloha==0.1.1 cryptography pyyaml statsmodels
           
       - name: Download Checkpoint from Hugging Face Commit (Provenance Binding)
         env:
