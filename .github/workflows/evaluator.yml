@@ -89,6 +89,8 @@ jobs:
           
       - name: Run Evaluation
         # We run the actual evaluation script in CPU mode (headless)
+        env:
+          MUJOCO_GL: egl
         run: |
           mkdir -p outputs/infected_${{ github.event.inputs.infection_level }}_seed_${{ github.event.inputs.seed }}
           
