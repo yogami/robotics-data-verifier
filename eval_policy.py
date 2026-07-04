@@ -36,9 +36,11 @@ class BCPolicyWrapper:
             # Fallback if other keys are used
             obs = next(iter(obs_dict.values()))
         return self.model(obs.to(self.device))
-
 def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=400, device="cuda", infection_level=0, seed=1001):
-    from lerobot.common.envs.factory import make_env
+    try:
+        from lerobot.envs.factory import make_env
+    except ImportError:
+        from lerobot.common.envs.factory import make_env
     
     print(f"Loading environment: aloha / {task}")
     env = make_env(env_type="aloha", task=task, fps=50)
