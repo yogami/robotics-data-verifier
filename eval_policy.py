@@ -43,7 +43,12 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
         from lerobot.common.envs.factory import make_env
     
     print(f"Loading environment: aloha / {task}")
-    env = make_env(env_type="aloha", task=task, fps=50)
+    try:
+        env = make_env(env_type="aloha", task=task, fps=50)
+    except TypeError:
+        import gymnasium as gym
+        import gym_aloha  # noqa: F401
+        env = gym.make(f"gym_aloha/{task}", obs_type="pixels_agent_pos", render_mode=None)
     
     print(f"Loading policy from: {policy_path}")
     
