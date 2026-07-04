@@ -11,9 +11,9 @@ import re
 
 # Load environment variables
 GITHUB_PAT = os.environ.get("GITHUB_PAT")
-REPO_OWNER = os.environ.get("REPO_OWNER", "yamijala")
+REPO_OWNER = os.environ.get("REPO_OWNER", "yogami")
 REPO_NAME = os.environ.get("REPO_NAME", "robotics-data-verifier")
-HF_REPO = os.environ.get("HF_REPO", "yamijala/aloha-act-sweep")
+HF_REPO = os.environ.get("HF_REPO", "gopalyami/aloha-act-sweep")
 RUNPOD_IP = os.environ.get("RUNPOD_IP")
 RUNPOD_PORT = os.environ.get("RUNPOD_PORT", "22")
 
