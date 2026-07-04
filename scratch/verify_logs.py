@@ -134,6 +134,8 @@ def verify_log(json_path: str, manifest_path: str, phase: str, infection_level: 
             sys.exit(0)
             
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":
