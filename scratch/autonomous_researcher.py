@@ -313,6 +313,15 @@ def run_production_orchestrator(infection, seed):
         print(f"Job (infection={infection}, seed={seed}) already completed successfully. Skipping.")
         return
         
+    checkpoint_branch = None
+    conn = sqlite3.connect("orchestrator_state.db")
+    c = conn.cursor()
+    c.execute("SELECT checkpoint_branch FROM jobs WHERE infection=? AND seed=?", (infection, seed))
+    row = c.fetchone()
+    if row:
+        checkpoint_branch = row[0]
+    conn.close()
+
     messages = [
         {
             "role": "user",
@@ -325,7 +334,32 @@ def run_production_orchestrator(infection, seed):
         }
     ]
     
-    update_job_status(infection, seed, "TRAINING")
+    if checkpoint_branch:
+        print(f"Orchestrator: Found existing checkpoint branch {checkpoint_branch} for infection={infection}, seed={seed}. Resuming from evaluation.")
+        # Reconstruct the tool call and tool result to skip training
+        messages.append({
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_reconstructed",
+                    "name": "start_runpod_training",
+                    "input": {"infection": infection, "seed": seed}
+                }
+            ]
+        })
+        messages.append({
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu_reconstructed",
+                    "content": f"Training success. HF Commit SHA: {checkpoint_branch}"
+                }
+            ]
+        })
+    else:
+        update_job_status(infection, seed, "TRAINING")
     
     while True:
         response = client.beta.messages.create(
