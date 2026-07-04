@@ -37,18 +37,15 @@ class BCPolicyWrapper:
             obs = next(iter(obs_dict.values()))
         return self.model(obs.to(self.device))
 def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=400, device="cuda", infection_level=0, seed=1001):
-    try:
-        from lerobot.envs.factory import make_env
-    except ImportError:
-        from lerobot.common.envs.factory import make_env
-    
-    print(f"Loading environment: aloha / {task}")
-    try:
-        env = make_env(env_type="aloha", task=task, fps=50)
-    except TypeError:
-        import gymnasium as gym
-        import gym_aloha  # noqa: F401
-        env = gym.make(f"gym_aloha/{task}", obs_type="pixels_agent_pos", render_mode=None)
+    import gymnasium as gym
+    import gym_aloha  # noqa: F401
+    env = gym.make(
+        f"gym_aloha/{task}",
+        obs_type="pixels_agent_pos",
+        render_mode=None,
+        observation_width=16,
+        observation_height=16
+    )
     
     print(f"Loading policy from: {policy_path}")
     
