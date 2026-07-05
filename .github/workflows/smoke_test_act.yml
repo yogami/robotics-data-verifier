@@ -31,10 +31,10 @@ jobs:
           python -m lerobot.scripts.lerobot_train \
             --policy.type=act \
             --env.type=aloha \
-            --dataset.repo_id=gopalyami/aloha-act-sweep \
+            --dataset.repo_id=lerobot/aloha_sim_insertion_human \
             --output_dir=outputs/act_smoke_test \
-            --steps=1000 \
-            --save_freq=1000 \
+            --steps=100 \
+            --save_freq=100 \
             --log_freq=10 \
             --save_checkpoint=false \
             --policy.push_to_hub=false \
