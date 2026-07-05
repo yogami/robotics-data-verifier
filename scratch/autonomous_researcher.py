@@ -342,6 +342,7 @@ def run_production_orchestrator(infection, seed):
             "content": (
                 f"You are the Executor. Train the model for infection={infection}, seed={seed}. "
                 f"Call start_runpod_training first, then trigger_github_evaluation. "
+                f"For trigger_github_evaluation, you MUST set the parameter phase='{'baseline_check' if (infection == 0 and seed == 1001) else 'sweep_logging'}' and attestation_level='spot_checked_interim'. "
                 f"You may invoke the 'advisor' tool at any point for strategic help, but note that the advisor "
                 f"operates in read-only advice mode and cannot execute terminal commands or invoke tools directly."
             )
