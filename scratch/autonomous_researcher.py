@@ -144,7 +144,7 @@ def run_ssh_training(infection, seed):
     
     cmd_train = (
         f"{ssh_prefix} "
-        f"\"nohup bash -c 'pip install \\\"lerobot[aloha,dataset,training]\\\" && pip install pyarrow pandas datasets huggingface_hub && python3 /root/robotics-data-verifier/train_act.py "
+        f"\"nohup bash -c 'mkdir -p /workspace/tmp && export TMPDIR=/workspace/tmp && pip cache purge && pip install --no-cache-dir \\\"lerobot[aloha,dataset,training]\\\" && pip install pyarrow pandas datasets huggingface_hub && python3 /root/robotics-data-verifier/train_act.py "
         f"--parquet {parquet_path} --output-model {model_output} --output-eval {eval_output} "
         f"--epochs 100 --hf-repo {HF_REPO} --hf-token \\$HF_TOKEN --hf-branch {branch_name} "
         f"--seed {seed} --infection-level {infection}' "
