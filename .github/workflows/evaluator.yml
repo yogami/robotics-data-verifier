@@ -112,7 +112,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
-          pip install gym-aloha==0.1.1 lerobot cryptography pyyaml statsmodels
+          pip install gym-aloha==0.1.1 lerobot datasets cryptography pyyaml statsmodels
           
       - name: Download Checkpoint from Hugging Face Commit (Provenance Binding)
         env:

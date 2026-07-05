@@ -98,11 +98,87 @@ def verify_ed25519_signature(public_key_openssh: str, entry: dict) -> tuple:
             public_key = serialization.load_ssh_public_key(OLD_KEY.encode('utf-8'))
             public_key.verify(signature, canonical_payload)
             entry["signature"] = signature_val
-            return True, False, _key_fingerprint(OLD_KEY)
+            # Fable 5 fix: Flag as legacy if it uses the old key, regardless of encoding
+            return True, True, _key_fingerprint(OLD_KEY)
         except Exception as e:
             print(f"New signature verification failed on both keys: {e}")
             entry["signature"] = signature_val
             return False, False, None
+
+def verify_ledger_entry(entry: dict, line_num: int, current_manifest_hash: str) -> bool:
+    """Run all hardened security gates on a ledger entry. Exits if tampering detected.
+    Returns True if the entry is valid and should be processed, False if it should be skipped (e.g. legacy)."""
+    
+    # Asymmetric signature check (Executor cannot forge this)
+    is_valid, is_legacy, verifying_key_fp = verify_ed25519_signature(EVAL_PUBLIC_KEY, entry)
+    if not is_valid:
+        print(f"ABORTING: Invalid asymmetric signature in verification ledger at line {line_num}. Tampering detected.")
+        sys.exit(1)
+    
+    # Revocation check against the ACTUAL key that verified the signature,
+    # not the self-reported key_id field (which is attacker-controlled).
+    if verifying_key_fp in REVOKED_KEYS:
+        print(f"ABORTING: Ledger entry at line {line_num} was signed by a revoked key (fingerprint: {verifying_key_fp}). Refusing to trust.")
+        sys.exit(1)
+        
+    if is_legacy:
+        print(f"SKIPPING: Ledger entry at line {line_num} was signed by a legacy/deprecated key. Strict enforcement active.")
+        return False
+        
+    # ---- Hardened gates apply to ALL modern entries ----
+    
+    # Hard-Enforced Confirmatory-Refusal Gate
+    attestation = entry.get("attestation_level")
+    valid_attestations = {"tee_attested", "spot_checked_interim"}
+    if attestation not in valid_attestations:
+        print(f"ABORTING: Invalid or missing attestation_level '{attestation}' at line {line_num}. Default-deny policy applied.")
+        sys.exit(1)
+    
+    # Check GitHub API for run_id and eval_commit_sha (Fails Closed)
+    run_id = entry.get("run_id")
+    eval_commit_sha = entry.get("eval_commit_sha")
+    if run_id and eval_commit_sha:
+        import urllib.request, urllib.error, os
+        try:
+            req = urllib.request.Request(f"https://api.github.com/repos/yogami/robotics-data-verifier/actions/runs/{run_id}")
+            req.add_header("Accept", "application/vnd.github.v3+json")
+            pat = os.environ.get("GITHUB_PAT")
+            if pat:
+                req.add_header("Authorization", f"token {pat}")
+            with urllib.request.urlopen(req, timeout=10) as response:
+                run_data = json.loads(response.read().decode())
+                if run_data.get("head_sha") != eval_commit_sha:
+                    print(f"ABORTING: eval_commit_sha mismatch with GitHub API for run {run_id}.")
+                    sys.exit(1)
+                # Verify the run actually completed successfully
+                if run_data.get("status") != "completed":
+                    print(f"ABORTING: GitHub run {run_id} status is '{run_data.get('status')}', expected 'completed'.")
+                    sys.exit(1)
+                if run_data.get("conclusion") != "success":
+                    print(f"ABORTING: GitHub run {run_id} conclusion is '{run_data.get('conclusion')}', expected 'success'.")
+                    sys.exit(1)
+        except urllib.error.HTTPError as e:
+            print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). HTTP {e.code}: {e.read().decode()}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). Error: {e}")
+            sys.exit(1)
+    else:
+        print(f"ABORTING: Missing run_id or eval_commit_sha for API cross-check at line {line_num}.")
+        sys.exit(1)
+        
+    # Manifest Hash Pinning check
+    ledger_manifest_hash = entry.get("manifest_hash")
+    ALLOWED_MANIFEST_HASHES = {
+        current_manifest_hash,
+        "4f79d0f94ef187a2f074f452422f29c8ef46f46357b4fdd8586206bc02c6798f",
+        "400b5490fd394bd0b1cf178496bc4396f4ee5b2d86161476b306b3f1c4e97eb5"
+    }
+    if ledger_manifest_hash not in ALLOWED_MANIFEST_HASHES:
+        print(f"ABORTING: Manifest hash mismatch in ledger at line {line_num}. Expected one of {ALLOWED_MANIFEST_HASHES}, got {ledger_manifest_hash}. The pre-registered manifest has been tampered with post-run.")
+        sys.exit(1)
+        
+    return True
 
 def run_binomial_gee_model(results_dir: str, manifest_path: str):
     try:
@@ -122,82 +198,8 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             for line_num, line in enumerate(f, 1):
                 entry = json.loads(line)
                     
-                # Asymmetric signature check (Executor cannot forge this)
-                is_valid, is_legacy, verifying_key_fp = verify_ed25519_signature(EVAL_PUBLIC_KEY, entry)
-                if not is_valid:
-                    print(f"ABORTING: Invalid asymmetric signature in verification ledger at line {line_num}. Tampering detected.")
-                    sys.exit(1)
-                
-                # Revocation check against the ACTUAL key that verified the signature,
-                # not the self-reported key_id field (which is attacker-controlled).
-                if verifying_key_fp in REVOKED_KEYS:
-                    print(f"ABORTING: Ledger entry at line {line_num} was signed by a revoked key (fingerprint: {verifying_key_fp}). Refusing to trust.")
-                    sys.exit(1)
-                    
-                # ---- Hardened gates apply to ALL entries (legacy and modern) ----
-                # Legacy entries that lack these fields will fail closed, which is
-                # intentional: old entries are historical and should not be added
-                # to verified_jobs for the current sweep.
-                
-                # Hard-Enforced Confirmatory-Refusal Gate
-                attestation = entry.get("attestation_level")
-                valid_attestations = {"tee_attested", "spot_checked_interim"}
-                if attestation not in valid_attestations:
-                    # Legacy entries without attestation_level are silently skipped
-                    # (they won't be added to verified_jobs). Only abort if a modern
-                    # entry has an invalid attestation.
-                    if not is_legacy:
-                        print(f"ABORTING: Invalid or missing attestation_level '{attestation}' at line {line_num}. Default-deny policy applied.")
-                        sys.exit(1)
-                    # Legacy entry without attestation: skip it (don't add to verified_jobs)
+                if not verify_ledger_entry(entry, line_num, current_manifest_hash):
                     continue
-                
-                # Check GitHub API for run_id and eval_commit_sha (Fails Closed)
-                run_id = entry.get("run_id")
-                eval_commit_sha = entry.get("eval_commit_sha")
-                if run_id and eval_commit_sha:
-                    import urllib.request, urllib.error, os
-                    try:
-                        req = urllib.request.Request(f"https://api.github.com/repos/yogami/robotics-data-verifier/actions/runs/{run_id}")
-                        req.add_header("Accept", "application/vnd.github.v3+json")
-                        pat = os.environ.get("GITHUB_PAT")
-                        if pat:
-                            req.add_header("Authorization", f"token {pat}")
-                        with urllib.request.urlopen(req, timeout=10) as response:
-                            run_data = json.loads(response.read().decode())
-                            if run_data.get("head_sha") != eval_commit_sha:
-                                print(f"ABORTING: eval_commit_sha mismatch with GitHub API for run {run_id}.")
-                                sys.exit(1)
-                            # Verify the run actually completed successfully
-                            if run_data.get("status") != "completed":
-                                print(f"ABORTING: GitHub run {run_id} status is '{run_data.get('status')}', expected 'completed'.")
-                                sys.exit(1)
-                            if run_data.get("conclusion") != "success":
-                                print(f"ABORTING: GitHub run {run_id} conclusion is '{run_data.get('conclusion')}', expected 'success'.")
-                                sys.exit(1)
-                    except urllib.error.HTTPError as e:
-                        print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). HTTP {e.code}: {e.read().decode()}")
-                        sys.exit(1)
-                    except Exception as e:
-                        print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). Error: {e}")
-                        sys.exit(1)
-                else:
-                    if not is_legacy:
-                        print(f"ABORTING: Missing run_id or eval_commit_sha for API cross-check at line {line_num}.")
-                        sys.exit(1)
-                    # Legacy entry without run_id: skip
-                    continue
-                    
-                # Manifest Hash Pinning check
-                ledger_manifest_hash = entry.get("manifest_hash")
-                ALLOWED_MANIFEST_HASHES = {
-                    current_manifest_hash,
-                    "4f79d0f94ef187a2f074f452422f29c8ef46f46357b4fdd8586206bc02c6798f",
-                    "400b5490fd394bd0b1cf178496bc4396f4ee5b2d86161476b306b3f1c4e97eb5"
-                }
-                if ledger_manifest_hash not in ALLOWED_MANIFEST_HASHES:
-                    print(f"ABORTING: Manifest hash mismatch in ledger at line {line_num}. Expected one of {ALLOWED_MANIFEST_HASHES}, got {ledger_manifest_hash}. The pre-registered manifest has been tampered with post-run.")
-                    sys.exit(1)
                     
                 if entry.get("status") == "PASSED" and entry.get("phase") == "sweep_logging":
                     verified_jobs[(entry.get("infection"), entry.get("seed"))] = {
@@ -329,6 +331,11 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             sys.exit(2)  # Exit code 2 = inconclusive (distinct from 0=pass, 1=crash)
         
         if res.pvalue < alpha:
+            print("\n" + "="*80)
+            print("!!! EXPLORATORY — NOT FOR PUBLICATION !!!")
+            print("This data was collected under spot_checked_interim attestation.")
+            print("It MUST NOT be used in published conclusions until verified by full TEE.")
+            print("="*80 + "\n")
             if res.correlation < 0:
                 print("STATISTICALLY SIGNIFICANT DEGRADATION.")
             else:

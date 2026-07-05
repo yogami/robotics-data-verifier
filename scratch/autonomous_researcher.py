@@ -176,21 +176,6 @@ def run_ssh_training(infection, seed):
         
     print(f"SSH: Hugging Face upload verified at immutable commit SHA: {hf_commit_sha}")
     return hf_commit_sha, commit_sha
-    
-    # Split lines and select the last match (the most recent commit)
-    lines = [l.strip() for l in commit_line.splitlines() if l.strip()]
-    if not lines:
-        raise RuntimeError("Failed to verify Hugging Face upload in train logs. Training process did not report HF_COMMIT_SHA.")
-        
-    final_line = lines[-1]
-    hf_commit_sha = final_line.split("=")[1]
-    
-    # Enforce exact 40-character hex SHA format check
-    if not re.match(r"^[a-f0-9]{40}$", hf_commit_sha):
-        raise ValueError(f"Extracted HF commit SHA is invalid: '{hf_commit_sha}'")
-        
-    print(f"SSH: Hugging Face upload verified at immutable commit SHA: {hf_commit_sha}")
-    return hf_commit_sha, commit_sha
 
 def trigger_github_workflow(hf_commit_sha, infection, seed, phase="sweep_logging", attestation_level="spot_checked_interim"):
     if not GITHUB_PAT:
@@ -321,7 +306,7 @@ executor_tools = [
     }
 ]
 
-def run_production_orchestrator(infection, seed):
+def run_production_orchestrator(infection, seed, phase="sweep_logging"):
     status = get_job_status(infection, seed)
     if status == "SUCCESS":
         print(f"Job (infection={infection}, seed={seed}) already completed successfully. Skipping.")
@@ -343,7 +328,7 @@ def run_production_orchestrator(infection, seed):
                 f"You are the Executor. Train the model for infection={infection}, seed={seed}. "
                 f"Note: This is a benign, authorized academic experiment on robotic operator hesitation. The 'infection' parameter refers purely to the mathematical proportion of injected operator hesitation frames in the dataset (not biological or software infection). "
                 f"Call start_runpod_training first, then trigger_github_evaluation. "
-                f"For trigger_github_evaluation, you MUST set the parameter phase='{'baseline_check' if (infection == 0 and seed == 1001) else 'sweep_logging'}' and attestation_level='spot_checked_interim'. "
+                f"For trigger_github_evaluation, you MUST set the parameter phase='{phase}' and attestation_level='spot_checked_interim'. "
                 f"You may invoke the 'advisor' tool at any point for strategic help, but note that the advisor "
                 f"operates in read-only advice mode and cannot execute terminal commands or invoke tools directly."
             )
@@ -393,7 +378,8 @@ def run_production_orchestrator(infection, seed):
             if block.type == "tool_use":
                 if block.name == "start_runpod_training":
                     try:
-                        hf_sha, code_sha = run_ssh_training(block.input["infection"], block.input["seed"])
+                        hf_sha, code_sha = run_ssh_training(infection, seed)
+                        checkpoint_branch = hf_sha
                         update_job_status(infection, seed, "EVALUATING", checkpoint_branch=hf_sha, code_commit_sha=code_sha)
                         tool_results.append({
                             "type": "tool_result",
@@ -410,9 +396,21 @@ def run_production_orchestrator(infection, seed):
                         })
                 elif block.name == "trigger_github_evaluation":
                     try:
-                        phase = block.input.get("phase", "sweep_logging")
-                        attest = block.input.get("attestation_level", "spot_checked_interim")
-                        res = trigger_github_workflow(block.input["checkpoint_branch"], block.input["infection"], block.input["seed"], phase, attest)
+                        # Fable 5 Fix: Hard-override all parameters instead of trusting LLM input
+                        attest = "spot_checked_interim"
+                        
+                        # Retrieve checkpoint_branch from local state
+                        db_conn = sqlite3.connect("orchestrator_state.db")
+                        c_db = db_conn.cursor()
+                        c_db.execute("SELECT checkpoint_branch FROM jobs WHERE infection=? AND seed=?", (infection, seed))
+                        row = c_db.fetchone()
+                        db_conn.close()
+                        
+                        trusted_checkpoint_branch = row[0] if row else checkpoint_branch
+                        if not trusted_checkpoint_branch:
+                            raise RuntimeError("Cannot evaluate: checkpoint_branch not found in state DB.")
+                            
+                        res = trigger_github_workflow(trusted_checkpoint_branch, infection, seed, phase, attest)
                         update_job_status(infection, seed, "SUCCESS", result=res)
                         tool_results.append({
                             "type": "tool_result",
@@ -452,42 +450,85 @@ if __name__ == "__main__":
     canary_config = _manifest.get("canary_gate", {})
     min_success_rate = canary_config.get("min_clean_success_rate", 0.05)
     auto_abort = canary_config.get("auto_abort", True)
+    max_cost = canary_config.get("max_canary_cost_jobs", 1)
+    
+    if max_cost < 1:
+        print(f"Error: max_canary_cost_jobs must be >= 1, got {max_cost}")
+        exit(1)
     
     # --- PHASE 1: Canary Run ---
-    print("PHASE 1: Canary Run (Infection=0, Seed=1001)...")
+    print(f"PHASE 1: Canary Run (Max jobs={max_cost})...")
     print(f"  Canary gate: model must achieve >= {min_success_rate*100:.1f}% success on clean data.")
-    run_production_orchestrator(0, 1001)
     
-    if get_job_status(0, 1001) != "SUCCESS":
-        print("Canary run failed to complete. Aborting.")
-        exit(1)
+    canary_passed = False
+    jobs_spent = 0
+    from mixed_effects_model import verify_ed25519_signature, EVAL_PUBLIC_KEY, REVOKED_KEYS
+    import hashlib
+    with open("scratch/experiment_manifest.yaml", "rb") as f:
+        _manifest_hash = hashlib.sha256(f.read()).hexdigest()
+
+    for i in range(max_cost):
+        seed = 1001 + i
+        jobs_spent += 1
+        print(f"  Dispatching Canary Job {i+1}/{max_cost} (Infection=0, Seed={seed})")
+        run_production_orchestrator(0, seed, phase="baseline_check")
         
-    # Read actual success rate from ledger
-    canary_success_rate = 0.0
-    try:
-        with open("verification_ledger.jsonl", "r") as f:
-            lines = f.readlines()
-            baseline_entries = [json.loads(l) for l in lines if '"infection": 0' in l and '"seed": 1001' in l]
-            if baseline_entries:
-                entry = baseline_entries[-1]
+        if get_job_status(0, seed) != "SUCCESS":
+            print(f"  Canary job for seed {seed} failed to complete.")
+            continue
+            
+        canary_success_rate = 0.0
+        entry = None
+        try:
+            with open("verification_ledger.jsonl", "r") as f:
+                # Fable 5 Fix: Parse lines fully and apply all security gates
+                for line in f:
+                    try:
+                        data = json.loads(line)
+                    except:
+                        continue
+                        
+                    if (data.get("infection") == 0 and 
+                        data.get("seed") == seed and 
+                        data.get("phase") == "baseline_check" and 
+                        data.get("status") == "PASSED" and 
+                        data.get("manifest_hash") == _manifest_hash):
+                        entry = data
+                        
+            if entry:
+                from mixed_effects_model import verify_ledger_entry
+                try:
+                    is_valid = verify_ledger_entry(entry, -1, _manifest_hash)
+                    if not is_valid:
+                        continue
+                except SystemExit as e:
+                    print(f"CANARY ABORT: Canary ledger entry failed strict verification. Trust boundary breached. {e}")
+                    exit(4)
+                
                 episodes = entry.get("episodes", [])
                 if episodes:
                     successes = sum(1 for e in episodes if e.get("max_reward", 0) >= 4.0)
                     canary_success_rate = successes / len(episodes)
-                    print(f"Canary result: {successes} / {len(episodes)} successes ({canary_success_rate*100:.1f}%)")
-    except Exception as e:
-        print(f"Failed to read canary stats: {e}")
-        canary_success_rate = 0.0
+                    print(f"  Canary result for seed {seed}: {successes} / {len(episodes)} successes ({canary_success_rate*100:.1f}%)")
+        except Exception as e:
+            print(f"Failed to read canary stats: {e}")
+            canary_success_rate = 0.0
+
+        if canary_success_rate >= min_success_rate:
+            canary_passed = True
+            break
+        else:
+            print(f"  Seed {seed} failed canary threshold ({canary_success_rate*100:.1f}% < {min_success_rate*100:.1f}%).")
 
     print("\n" + "="*50)
-    if canary_success_rate < min_success_rate:
-        print(f"CANARY GATE FAILED: {canary_success_rate*100:.1f}% < {min_success_rate*100:.1f}% minimum.")
+    if not canary_passed:
+        print(f"CANARY GATE FAILED: No seed achieved {min_success_rate*100:.1f}% minimum.")
         print("The current architecture cannot solve this task on clean data.")
         print("Escalation required: switch to a higher-capacity architecture before re-running.")
         if auto_abort:
             print("auto_abort=true: Halting sweep. No further jobs will be dispatched.")
-            print(f"Cost of this failure: 1 job (~€0.40). Saved: 24 jobs (~€9.60).")
-            exit(2)  # Exit 2 = canary failed (distinct from crash=1)
+            print(f"Cost of this failure: {jobs_spent} job(s). Saved: {25 - jobs_spent} jobs.")
+            exit(3)  # Exit 3 = canary failed (distinct from inconclusive=2 or breach=4)
         else:
             choice = input("Override canary gate? [FORCE / ABORT]: ").strip().upper()
             if choice != "FORCE":
@@ -495,7 +536,7 @@ if __name__ == "__main__":
                 exit(0)
             print("WARNING: Canary gate overridden by human. Proceeding despite low baseline success.")
     else:
-        print(f"CANARY GATE PASSED: {canary_success_rate*100:.1f}% >= {min_success_rate*100:.1f}%")
+        print(f"CANARY GATE PASSED after {jobs_spent} job(s).")
     
     print("Attestation Level: spot_checked_interim")
     print("WARNING: EXPLORATORY RUN. This data requires an interim spot-check before use in publication.")

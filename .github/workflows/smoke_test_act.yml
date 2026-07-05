@@ -23,7 +23,7 @@ jobs:
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           # Install lerobot from github with dataset, aloha, and training extras
           pip install "lerobot[aloha,dataset,training] @ git+https://github.com/huggingface/lerobot.git"
-          pip install pyarrow pandas
+          pip install pyarrow pandas datasets wandb
 
       - name: Run ACT Smoke Test (1000 steps)
         run: |
