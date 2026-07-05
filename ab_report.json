@@ -1,0 +1,23 @@
+{
+  "experiment": "ArchitectureAwareDriftGate A/B Validation",
+  "timestamp": "2026-07-02T20:31:46.303426",
+  "unfiltered": {
+    "description": "Trained on ALL episodes including corrupted/gate-rejected",
+    "final_train_loss": 0.00010073784958463595,
+    "success_rate": 0.0,
+    "mean_reward": 0.42,
+    "n_eval_episodes": 50
+  },
+  "filtered": {
+    "description": "Trained only on gate-PASSED (clean) episodes",
+    "final_train_loss": 0.00011096028742817784,
+    "success_rate": 0.0,
+    "mean_reward": 0.0,
+    "n_eval_episodes": 50
+  },
+  "delta": {
+    "train_loss_improvement": -1.0222437843541884e-05,
+    "success_rate_improvement": 0,
+    "mean_reward_improvement": -0.42
+  }
+}

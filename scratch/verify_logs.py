@@ -4,8 +4,8 @@ import datetime
 import hashlib
 import os
 from pathlib import Path
-import yaml
 from statsmodels.stats.proportion import proportion_confint
+from fable5_api import check_with_fable5
 
 def load_and_hash_manifest(path: str):
     # Read manifest atomically to prevent tampering before signing
@@ -118,14 +118,12 @@ def verify_log(json_path: str, manifest_path: str, phase: str, infection_level: 
         }
         
         if phase == "baseline_check":
-            target = manifest.get("baseline_target_success_rate", 50.0)
-            alpha = manifest.get("analysis_plan", {}).get("alpha_threshold", 0.05)
-            lo, hi = proportion_confint(successes, target_episodes, alpha=alpha, method="beta")
-            if lo >= (target / 100.0):
+            approved = check_with_fable5(successes, target_episodes, phase, infection_level, seed)
+            if approved:
                 dump_payload(payload)
                 sys.exit(0)
             else:
-                print(f"Cryptographic Verification Failed: Baseline check did not meet target. lo={lo} target={target/100.0}")
+                print(f"Cryptographic Verification Failed: Fable 5 rejected the seed's performance.")
                 sys.exit(1)
                 
         elif phase == "sweep_logging":

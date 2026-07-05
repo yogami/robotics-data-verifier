@@ -1,0 +1,113 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/yamijala/gitprojects/robotics-data-verifier
+plugins: anyio-4.12.1, base-url-2.1.0, playwright-0.7.1
+collected 2 items
+
+test_sim_negative_control.py Sim dataset: state dim=14, action dim=14
+Sim dataset: 7500 frames, 15 episodes
+Analyzing real Hugging Face Parquet dataset: data/aloha_sim_insertion_human.parquet
+EP0 TCP_DRIFTS: []
+EP0 CONTACT_FREE: 0
+EP0 STABLE: 97
+EPISODE_DATA: [{'episode_idx': np.int64(0), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(1), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(2), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(3), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(4), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(5), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(6), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(7), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(8), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(9), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(10), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(11), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(12), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(13), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(14), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}]
+EPISODE_DATA: [{'episode_idx': np.int64(0), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(1), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(2), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(3), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(4), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(5), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(6), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(7), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(8), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(9), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(10), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(11), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(12), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(13), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(14), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}]
+Sim negative control: 0/15 episodes flagged
+.Analyzing real Hugging Face Parquet dataset: /private/var/folders/gt/klnn2g_n08j9ddh6xds2lg8h0000gn/T/pytest-of-yamijala/pytest-6/test_sim_positive_control0/injected_sim.parquet
+EP0 TCP_DRIFTS: []
+EP0 CONTACT_FREE: 0
+EP0 STABLE: 97
+EPISODE_DATA: [{'episode_idx': np.int64(0), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(1), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(2), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(3), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(4), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(5), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(6), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(7), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(8), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(9), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(10), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(11), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(12), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(13), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(14), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}]
+EPISODE_DATA: [{'episode_idx': np.int64(0), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(1), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(2), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(3), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(4), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(5), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(6), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(7), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(8), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(9), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(10), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(11), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(12), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(13), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}, {'episode_idx': np.int64(14), 'tcp_drift_mm': 0.0, 'std_tcp_mm': 0.0, 'rot_drift': 0.0, 'temporal_consistency': 0.0}]
+DEBUG EPISODE DATA:
+{'dataset': 'lerobot/aloha_mobile_cabinet (HF Hub)', 'total_episodes_analyzed': 15, 'failed_episodes': [], 'slack_alert_status': 'NOT_TRIGGERED', 'message': 'All 15 episodes passed quality gates (clean benchmark dataset).', 'plot_url': '/static/real_calibration_drift_401d1fbde12e408f87026ae03f5ef049.png'}
+F
+
+=================================== FAILURES ===================================
+__________________________ test_sim_positive_control ___________________________
+
+sim_parquet = 'data/aloha_sim_insertion_human.parquet'
+tmp_path = PosixPath('/private/var/folders/gt/klnn2g_n08j9ddh6xds2lg8h0000gn/T/pytest-of-yamijala/pytest-6/test_sim_positive_control0')
+
+    def test_sim_positive_control(sim_parquet, tmp_path):
+        """
+        Injects an artificial 6-degree orientation offset (0.1 rad) into Joint 0 (waist)
+        of Episode 0 to ensure the Triple-Gate successfully flags it.
+        """
+        import pandas as pd
+        from lerobot_buffer_hook import ArchitectureAwareDriftGate
+    
+        df = pd.read_parquet(sim_parquet)
+    
+        # Inject a 11.5-degree (0.2 rad) offset into the leader waist joint for episode 0
+        # The real-time buffer receives (leader, follower) as (actions, states)
+        # Adding to the action (leader) creates a systematic leader-follower offset.
+        mask = df["episode_index"] == 0
+    
+        # actions is a list of arrays. We need to modify the array for episode 0.
+        new_actions = []
+        for idx, row in df.iterrows():
+            action = np.array(row["action"])
+            if row["episode_index"] == 0:
+                if len(action) == 16:
+                    action[2] += 0.2  # waist is index 2 if 16-D
+                else:
+                    action[0] += 0.2  # waist is index 0 if 14-D
+            new_actions.append(action)
+    
+        df["action"] = new_actions
+    
+        # Save modified parquet to tmp
+        injected_path = os.path.join(tmp_path, "injected_sim.parquet")
+        df.to_parquet(injected_path)
+    
+    
+        gate = ArchitectureAwareDriftGate()
+        report = gate.analyze_real_parquet(injected_path)
+    
+        # Print out debug info
+        print("DEBUG EPISODE DATA:")
+        print(report)
+    
+        flagged_eps = [ep["episode"] for ep in report["failed_episodes"]]
+    
+    
+>       assert "episode_0" in flagged_eps, (
+            f"Positive control failed! Inserted 11.5-degree offset into episode_0, "
+            f"but it was not flagged. Flagged episodes: {flagged_eps}"
+        )
+E       AssertionError: Positive control failed! Inserted 11.5-degree offset into episode_0, but it was not flagged. Flagged episodes: []
+E       assert 'episode_0' in []
+
+test_sim_negative_control.py:113: AssertionError
+=============================== warnings summary ===============================
+test_sim_negative_control.py::test_sim_zero_false_positives
+  /Users/yamijala/gitprojects/robotics-data-verifier/venv/lib/python3.9/site-packages/matplotlib/_fontconfig_pattern.py:64: PyparsingDeprecationWarning: 'oneOf' deprecated - use 'one_of'
+    prop = Group((name + Suppress("=") + comma_separated(value)) | oneOf(_CONSTANTS))
+
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+  /Users/yamijala/gitprojects/robotics-data-verifier/venv/lib/python3.9/site-packages/matplotlib/_fontconfig_pattern.py:85: PyparsingDeprecationWarning: 'parseString' deprecated - use 'parse_string'
+    parse = parser.parseString(pattern)
+
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+test_sim_negative_control.py::test_sim_zero_false_positives
+  /Users/yamijala/gitprojects/robotics-data-verifier/venv/lib/python3.9/site-packages/matplotlib/_fontconfig_pattern.py:89: PyparsingDeprecationWarning: 'resetCache' deprecated - use 'reset_cache'
+    parser.resetCache()
+
+test_sim_negative_control.py::test_sim_zero_false_positives
+  /Users/yamijala/gitprojects/robotics-data-verifier/venv/lib/python3.9/site-packages/matplotlib/_mathtext.py:45: PyparsingDeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED test_sim_negative_control.py::test_sim_positive_control - AssertionErr...
+=================== 1 failed, 1 passed, 14 warnings in 0.62s ===================

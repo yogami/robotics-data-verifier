@@ -128,7 +128,7 @@ def run_ssh_training(infection, seed):
     run_cmd_with_retry(cmd_clone, check=True)
     
     # Kill any leftover training/watchdog processes from previous failed runs
-    cleanup_cmd = f"{ssh_prefix} \"pkill -f train_bc_policy.py || true; pkill -f runpod_watchdog.py || true\""
+    cleanup_cmd = f"{ssh_prefix} \"pkill -f train_act.py || true; pkill -f runpod_watchdog.py || true\""
     run_cmd_with_retry(cleanup_cmd, check=False)
     
     print(f"SSH: Uploading dataset for infection={infection} to RunPod...")
@@ -137,14 +137,14 @@ def run_ssh_training(infection, seed):
     run_cmd_with_retry(scp_cmd, check=True)
     
     # 2. Launch training in the background and capture the PID
-    print("SSH: Launching train_bc_policy.py from the trusted git checkout...")
+    print("SSH: Launching train_act.py from the trusted git checkout...")
     parquet_path = f"/root/data/infection_{infection}.parquet"
-    model_output = f"/root/outputs/bc_model.pt"
+    model_output = f"/root/outputs/act_model"
     eval_output = f"/root/outputs/eval.json"
     
     cmd_train = (
         f"{ssh_prefix} "
-        f"\"nohup python3 /root/robotics-data-verifier/train_bc_policy.py "
+        f"\"nohup python3 /root/robotics-data-verifier/train_act.py "
         f"--parquet {parquet_path} --output-model {model_output} --output-eval {eval_output} "
         f"--epochs 100 --hf-repo {HF_REPO} --hf-token \\$HF_TOKEN --hf-branch {branch_name} "
         f"--seed {seed} --infection-level {infection} "

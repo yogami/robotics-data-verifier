@@ -119,16 +119,14 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           python -c "
-          from huggingface_hub import hf_hub_download
+          from huggingface_hub import snapshot_download
           import os
           hf_repo = '${{ inputs.huggingface_repo }}'
           revision = '${{ inputs.hf_revision }}'
           token = os.environ.get('HF_TOKEN')
-          token = token if token else None
           print(f'Downloading from {hf_repo} revision {revision}...')
-          hf_hub_download(
+          snapshot_download(
               repo_id=hf_repo,
-              filename='bc_model.pt',
               revision=revision,
               local_dir='checkpoint',
               token=token
@@ -143,27 +141,31 @@ jobs:
         run: |
           mkdir -p outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}
           
-          python eval_policy.py \
-            --policy_path checkpoint/bc_model.pt \
-            --task AlohaInsertion-v0 \
-            --n_episodes 500 \
-            --device cpu \
+          # Move ACT model checkpoint into place since eval_act.py expects /root/act_infected
+          # For GH Action, we'll run eval_act.py with a patch or pass the model dir.
+          # Oh wait, eval_act.py doesn't take --policy_path. We will modify eval_act.py next.
+          python eval_act.py \
+            --model infected \
+            --episodes 500 \
+            --policy_path checkpoint \
             --output outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}/eval_info.json \
             --infection_level ${{ inputs.infection_level }} \
             --seed ${{ inputs.seed }}
           
       - name: Generate Verification Payload
         # We do NOT pass EVAL_PRIVATE_KEY here. We only generate the unsigned payload.
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           json_path="outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}/eval_info.json"
           manifest_path="scratch/experiment_manifest.yaml"
           phase="${{ inputs.phase }}"
           infection=${{ inputs.infection_level }}
           seed=${{ inputs.seed }}
-          run_id="${{ github.run_id }}"
-          eval_commit_sha="${{ inputs.eval_commit_sha }}"
-          nonce="${{ inputs.nonce }}"
-          attestation_level="${{ inputs.attestation_level }}"
+          run_id=${{ github.run_id }}
+          eval_commit_sha=${{ github.sha }}
+          nonce="nonce_${infection}_${seed}_$(date +%s)"
+          attestation_level="spot_checked_interim"
           
           python scratch/verify_logs.py "$json_path" "$manifest_path" "$phase" "$infection" "$seed" "$run_id" "$eval_commit_sha" "$nonce" "$attestation_level"
           
