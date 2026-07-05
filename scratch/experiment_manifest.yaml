@@ -28,7 +28,7 @@ baseline_target_success_rate: 0.0
 conditions:
   infection_levels: [0, 25, 50, 75, 100]
   seeds: [1001, 2002, 3003, 4004, 5005]
-  exploratory_seeds: [9001, 9002, 9003]
+  exploratory_seeds: [1001, 9001, 9002, 9003]
   total_training_jobs: 25
 
 evaluation:
