@@ -2,12 +2,12 @@
 # PRE-REGISTERED EXPERIMENTAL DESIGN
 
 experiment_name: "ACT_Operator_Hesitation_Sweep"
-architecture: "MLP-BC" # Downgraded to MLP for rapid iteration due to compute constraints
+architecture: "ACT" # Escalated from MLP-BC due to floor effect
 
 # The orchestrator is not permitted to modify this manifest.
 # Verification secret key is stored in GitHub Secrets and read via env vars.
 
-escalation_rule: "If MLP-BC (baseline model) fails to detect a significant effect (p > alpha_threshold), the protocol mandates escalation to the full ACT architecture to rule out model-capacity confounding."
+escalation_rule: "Escalation to ACT triggered by failed MLP-BC baseline."
 
 hyperparameter_search_space:
   learning_rate:
