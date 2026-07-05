@@ -99,10 +99,8 @@ def train(parquet_path, output_path, eval_output, epochs, batch_size, lr, seed, 
             }
             
             output = policy(batch)
-            actions_hat = output[0] if isinstance(output, tuple) else output
+            loss = output[0] if isinstance(output, tuple) else output
             
-            # MSE loss over action chunks
-            loss = torch.nn.functional.mse_loss(actions_hat, action_chunk)
             
             optimizer.zero_grad()
             loss.backward()
