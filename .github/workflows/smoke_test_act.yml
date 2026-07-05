@@ -28,7 +28,7 @@ jobs:
         run: |
           # We train the ACT model on the clean dataset (infection=0) for just 1000 steps.
           # This is to verify that ACT can initialize and loss decreases on this task.
-          python -m lerobot.scripts.train \
+          python -m lerobot.scripts.lerobot_train \
             --policy.type=act \
             --env.type=aloha \
             --dataset.repo_id=gopalyami/aloha-act-sweep \
