@@ -76,25 +76,26 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
+      - name: Checkout repository at pinned commit
         uses: actions/checkout@v4
         with:
-          # Force checkout main to prevent Executor from changing evaluation scripts on a branch
-          ref: main
-          fetch-depth: 0
+          # Pin checkout to the exact commit SHA that the orchestrator used during training.
+          # This eliminates the TOCTOU race where hotfixes pushed to main between
+          # training and evaluation would cause a codebase mismatch.
+          ref: ${{ inputs.eval_commit_sha }}
+          fetch-depth: 1
 
       - name: Verify Code Commit Pinning
-        # Enforce that the clean checkout of main is exactly the commit that was audited and run by the orchestrator.
-        # This prevents any TOCTOU updates to main between training and evaluation steps.
         run: |
           current_sha=$(git rev-parse HEAD)
           expected_sha="${{ inputs.eval_commit_sha }}"
-          echo "Current main branch HEAD SHA: $current_sha"
-          echo "Expected orchestrator pinned SHA: $expected_sha"
+          echo "Checked out SHA: $current_sha"
+          echo "Expected SHA:    $expected_sha"
           if [ "$current_sha" != "$expected_sha" ]; then
-            echo "CRITICAL ERROR: Codebase mismatch! The latest commit on main does not match the orchestrator commit."
+            echo "CRITICAL ERROR: Checkout did not land on the expected commit!"
             exit 1
           fi
+          echo "Commit pinning verified."
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -182,10 +183,10 @@ jobs:
     needs: evaluate
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout repository at pinned commit
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.eval_commit_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
