@@ -27,7 +27,7 @@ class AlohaChunkedDataset(Dataset):
         ep_col = "episode_index" if "episode_index" in df.columns else ("episode_id" if "episode_id" in df.columns else None)
         
         state_cols = [c for c in df.columns if c.startswith("observation.") or c.startswith("state.")]
-        action_cols = [c for c in df.columns if c.startswith("action.")]
+        action_cols = [c for c in df.columns if c == "action" or c.startswith("action.")]
         
         if not state_cols and not action_cols:
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
