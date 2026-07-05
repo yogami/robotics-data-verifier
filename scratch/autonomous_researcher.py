@@ -431,7 +431,16 @@ def run_production_orchestrator(infection, seed):
         if tool_results:
             messages.append({"role": "user", "content": tool_results})
         else:
-            break
+            # If no client-side tools were called, check if the job succeeded or failed.
+            # If it is still in TRAINING/EVALUATING, prompt the model to proceed.
+            time.sleep(2)
+            current_status = get_job_status(infection, seed)
+            if current_status in ["SUCCESS", "FAILED"]:
+                break
+            messages.append({
+                "role": "user",
+                "content": "Please proceed with training the model using start_runpod_training, or trigger evaluation using trigger_github_evaluation."
+            })
 
 if __name__ == "__main__":
     # --- PHASE 1: Baseline Run ---
