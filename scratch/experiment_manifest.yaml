@@ -23,7 +23,12 @@ hyperparameter_search_space:
     type: "fixed"
     value: 256
 
-baseline_target_success_rate: 0.0
+# Canary gate: auto-abort the sweep if the clean baseline model cannot
+# solve the task at all. Prevents burning 24 more jobs on a dead architecture.
+canary_gate:
+  min_clean_success_rate: 0.05   # At least 5% on clean data (infection=0)
+  auto_abort: true               # Don't ask, just stop
+  max_canary_cost_jobs: 1        # Only 1 job wasted if canary fails
 
 conditions:
   infection_levels: [0, 25, 50, 75, 100]

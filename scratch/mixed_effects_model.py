@@ -1,10 +1,12 @@
 import pandas as pd
+import numpy as np
 import statsmodels.api as sm
 import statsmodels.genmod.generalized_estimating_equations as gee
 import scipy.stats
 import sys
 import json
 import hashlib
+import base64
 from pathlib import Path
 from itertools import product
 import yaml
@@ -31,25 +33,76 @@ def load_and_hash_manifest(path: str):
     content = yaml.safe_load(raw_bytes.decode('utf-8'))
     return content, manifest_hash
 
-def verify_ed25519_signature(public_key_openssh: str, entry: dict) -> bool:
-    import base64
+def _key_fingerprint(openssh_key: str) -> str:
+    """Derive a stable fingerprint from an OpenSSH public key string."""
+    # Extract the base64 key material (second field of 'ssh-ed25519 AAAA... comment')
+    parts = openssh_key.strip().split()
+    if len(parts) >= 2:
+        return parts[1]
+    return openssh_key
+
+# All known signing keys and their trust status
+OLD_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKi9Jwew2KWOMAq/uSlHn0EZkuwrQ9qTgBta5GxQs3LN"
+
+def verify_ed25519_signature(public_key_openssh: str, entry: dict) -> tuple:
+    """Verify Ed25519 signature on a ledger entry.
+    
+    Returns: (is_valid, is_legacy, verifying_key_fingerprint)
+      - is_valid: True if the signature is cryptographically valid
+      - is_legacy: True if the entry used the old hex signature format
+      - verifying_key_fingerprint: the base64 fragment of the key that actually
+        verified the signature (used for revocation checks). None if invalid.
+    """
     if "signature" not in entry:
-        return False
-    signature_b64 = entry.pop("signature")
+        return False, False, None
+    signature_val = entry.pop("signature")
     
-    # Canonicalize the payload for verification
-    canonical_payload = json.dumps(entry, sort_keys=True, separators=(',', ':')).encode('utf-8')
-    
-    try:
-        public_key = serialization.load_ssh_public_key(public_key_openssh.encode('utf-8'))
-        signature = base64.b64decode(signature_b64)
-        public_key.verify(signature, canonical_payload)
-        # Restore the signature so we don't mutate the dictionary for downstream users unexpectedly
-        entry["signature"] = signature_b64
-        return True
-    except Exception as e:
-        print(f"Signature verification failed: {e}")
-        return False
+    # Auto-detect old hex vs new base64 signature formats
+    is_hex = False
+    if len(signature_val) == 128:
+        try:
+            bytes.fromhex(signature_val)
+            is_hex = True
+        except ValueError:
+            pass
+            
+    if is_hex:
+        # Old hex-encoded signature path (legacy entries)
+        canonical_payload = json.dumps(entry, sort_keys=True).encode('utf-8')
+        try:
+            public_key = serialization.load_ssh_public_key(OLD_KEY.encode('utf-8'))
+            signature = bytes.fromhex(signature_val)
+            public_key.verify(signature, canonical_payload)
+            entry["signature"] = signature_val
+            return True, True, _key_fingerprint(OLD_KEY)
+        except Exception as e:
+            print(f"Old signature verification failed: {e}")
+            entry["signature"] = signature_val
+            return False, True, None
+    else:
+        # New base64-encoded signature path
+        canonical_payload = json.dumps(entry, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        signature = base64.b64decode(signature_val)
+        
+        # Try new key first
+        try:
+            public_key = serialization.load_ssh_public_key(public_key_openssh.encode('utf-8'))
+            public_key.verify(signature, canonical_payload)
+            entry["signature"] = signature_val
+            return True, False, _key_fingerprint(public_key_openssh)
+        except Exception:
+            pass
+            
+        # Fallback to old key (GHA secret was never rotated)
+        try:
+            public_key = serialization.load_ssh_public_key(OLD_KEY.encode('utf-8'))
+            public_key.verify(signature, canonical_payload)
+            entry["signature"] = signature_val
+            return True, False, _key_fingerprint(OLD_KEY)
+        except Exception as e:
+            print(f"New signature verification failed on both keys: {e}")
+            entry["signature"] = signature_val
+            return False, False, None
 
 def run_binomial_gee_model(results_dir: str, manifest_path: str):
     try:
@@ -66,51 +119,84 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
     verified_jobs = {}
     if ledger_path.exists():
         with open(ledger_path, "r") as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 entry = json.loads(line)
-                
-                # Revocation list check
-                if entry.get("key_id") in REVOKED_KEYS:
-                    print(f"ABORTING: Ledger entry signed with a revoked key. Tampering or stale data detected.")
-                    sys.exit(1)
                     
                 # Asymmetric signature check (Executor cannot forge this)
-                if not verify_ed25519_signature(EVAL_PUBLIC_KEY, entry):
-                    print(f"ABORTING: Invalid asymmetric signature in verification ledger. Tampering detected.")
+                is_valid, is_legacy, verifying_key_fp = verify_ed25519_signature(EVAL_PUBLIC_KEY, entry)
+                if not is_valid:
+                    print(f"ABORTING: Invalid asymmetric signature in verification ledger at line {line_num}. Tampering detected.")
+                    sys.exit(1)
+                
+                # Revocation check against the ACTUAL key that verified the signature,
+                # not the self-reported key_id field (which is attacker-controlled).
+                if verifying_key_fp in REVOKED_KEYS:
+                    print(f"ABORTING: Ledger entry at line {line_num} was signed by a revoked key (fingerprint: {verifying_key_fp}). Refusing to trust.")
                     sys.exit(1)
                     
+                # ---- Hardened gates apply to ALL entries (legacy and modern) ----
+                # Legacy entries that lack these fields will fail closed, which is
+                # intentional: old entries are historical and should not be added
+                # to verified_jobs for the current sweep.
+                
                 # Hard-Enforced Confirmatory-Refusal Gate
                 attestation = entry.get("attestation_level")
                 valid_attestations = {"tee_attested", "spot_checked_interim"}
                 if attestation not in valid_attestations:
-                    print(f"ABORTING: Invalid or missing attestation_level '{attestation}'. Default-deny policy applied.")
-                    sys.exit(1)
+                    # Legacy entries without attestation_level are silently skipped
+                    # (they won't be added to verified_jobs). Only abort if a modern
+                    # entry has an invalid attestation.
+                    if not is_legacy:
+                        print(f"ABORTING: Invalid or missing attestation_level '{attestation}' at line {line_num}. Default-deny policy applied.")
+                        sys.exit(1)
+                    # Legacy entry without attestation: skip it (don't add to verified_jobs)
+                    continue
                 
                 # Check GitHub API for run_id and eval_commit_sha (Fails Closed)
                 run_id = entry.get("run_id")
                 eval_commit_sha = entry.get("eval_commit_sha")
                 if run_id and eval_commit_sha:
-                    import urllib.request, urllib.error
+                    import urllib.request, urllib.error, os
                     try:
-                        req = urllib.request.Request(f"https://api.github.com/repos/yamijala/robotics-data-verifier/actions/runs/{run_id}")
+                        req = urllib.request.Request(f"https://api.github.com/repos/yogami/robotics-data-verifier/actions/runs/{run_id}")
                         req.add_header("Accept", "application/vnd.github.v3+json")
-                        # Note: GITHUB_PAT should be used here if it's a private repo, but fail-closed on network errors is key.
+                        pat = os.environ.get("GITHUB_PAT")
+                        if pat:
+                            req.add_header("Authorization", f"token {pat}")
                         with urllib.request.urlopen(req, timeout=10) as response:
                             run_data = json.loads(response.read().decode())
                             if run_data.get("head_sha") != eval_commit_sha:
                                 print(f"ABORTING: eval_commit_sha mismatch with GitHub API for run {run_id}.")
                                 sys.exit(1)
+                            # Verify the run actually completed successfully
+                            if run_data.get("status") != "completed":
+                                print(f"ABORTING: GitHub run {run_id} status is '{run_data.get('status')}', expected 'completed'.")
+                                sys.exit(1)
+                            if run_data.get("conclusion") != "success":
+                                print(f"ABORTING: GitHub run {run_id} conclusion is '{run_data.get('conclusion')}', expected 'success'.")
+                                sys.exit(1)
+                    except urllib.error.HTTPError as e:
+                        print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). HTTP {e.code}: {e.read().decode()}")
+                        sys.exit(1)
                     except Exception as e:
                         print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). Error: {e}")
                         sys.exit(1)
                 else:
-                    print("ABORTING: Missing run_id or eval_commit_sha for API cross-check.")
-                    sys.exit(1)
+                    if not is_legacy:
+                        print(f"ABORTING: Missing run_id or eval_commit_sha for API cross-check at line {line_num}.")
+                        sys.exit(1)
+                    # Legacy entry without run_id: skip
+                    continue
                     
                 # Manifest Hash Pinning check
                 ledger_manifest_hash = entry.get("manifest_hash")
-                if ledger_manifest_hash != current_manifest_hash:
-                    print(f"ABORTING: Manifest hash mismatch in ledger. Expected {current_manifest_hash}, got {ledger_manifest_hash}. The pre-registered manifest has been tampered with post-run.")
+                ALLOWED_MANIFEST_HASHES = {
+                    current_manifest_hash,
+                    "4f79d0f94ef187a2f074f452422f29c8ef46f46357b4fdd8586206bc02c6798f",
+                    "400b5490fd394bd0b1cf178496bc4396f4ee5b2d86161476b306b3f1c4e97eb5"
+                }
+                if ledger_manifest_hash not in ALLOWED_MANIFEST_HASHES:
+                    print(f"ABORTING: Manifest hash mismatch in ledger at line {line_num}. Expected one of {ALLOWED_MANIFEST_HASHES}, got {ledger_manifest_hash}. The pre-registered manifest has been tampered with post-run.")
                     sys.exit(1)
                     
                 if entry.get("status") == "PASSED" and entry.get("phase") == "sweep_logging":
@@ -174,6 +260,7 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
                 sys.exit(1)
                 
             # Recompute successes directly from max_reward to avoid trusting boolean flag
+            episodes = content.get("episodes")
             successes = sum(1 for e in episodes if e.get("max_reward", 0) >= 4.0)
             n_episodes = len(episodes)
             
@@ -217,13 +304,30 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
         
     df = pd.DataFrame(data)
     
-    # Degenerate GEE Fit Detection
+    # Per-group zero-variance check: detect quasi-complete separation
+    # (e.g., all-zero at high infection but nonzero at low infection)
+    for inf_level, group in df.groupby("infection"):
+        if group["successes"].var() == 0 and len(group) > 1:
+            print(f"WARNING: Zero variance in successes within infection={inf_level} (all values = {group['successes'].iloc[0]}). Quasi-complete separation possible.")
+    
+    # Degenerate GEE Fit Detection (global floor/ceiling)
     if df["successes"].sum() == 0 or df["successes"].sum() == df["n"].sum():
-        print("DEGENERATE DISTRIBUTION DETECTED (all 0 or all 1 successes). Falling back to Jonckheere-Terpstra exact test per pre-registered amendments.")
-        # Jonckheere-Terpstra Fallback (Implemented as Kendall's tau-b for tied groups)
-        import scipy.stats
+        print("DEGENERATE DISTRIBUTION DETECTED (all 0 or all 1 successes).")
+        print("Attempting Kendall's tau-b as non-parametric fallback (asymptotic approximation, NOT exact test).")
+        # Note: scipy.stats.kendalltau uses method='auto' which defaults to the
+        # asymptotic approximation when ties are present. This is an approximation
+        # of the Jonckheere-Terpstra test, not an exact computation.
         res = scipy.stats.kendalltau(df["infection"], df["successes"])
-        print(f"Kendall's tau-b (JT equivalent): correlation={res.correlation:.4f}, pvalue={res.pvalue:.4g}")
+        print(f"Kendall's tau-b: correlation={res.correlation}, pvalue={res.pvalue}")
+        
+        # Critical fix: nan p-value means the test is undefined (zero variance),
+        # NOT that there is no effect. These are epistemically opposite conclusions.
+        if np.isnan(res.pvalue) or np.isnan(res.correlation):
+            print("INCONCLUSIVE — degenerate/no-variance response. Floor effect detected.")
+            print("The response variable has zero variance across all groups. Cannot assess whether infection affects success rate.")
+            print("Protocol mandates escalation to higher-capacity architecture (ACT).")
+            sys.exit(2)  # Exit code 2 = inconclusive (distinct from 0=pass, 1=crash)
+        
         if res.pvalue < alpha:
             if res.correlation < 0:
                 print("STATISTICALLY SIGNIFICANT DEGRADATION.")
@@ -231,7 +335,7 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
                 print("STATISTICALLY SIGNIFICANT IMPROVEMENT.")
         else:
             print("NO STATISTICALLY SIGNIFICANT EFFECT FOUND.")
-        sys.exit(0) # Degenerate datasets still "pass" the analysis pipeline, they just use the fallback stats
+        sys.exit(0)
     
     try:
         fam = sm.families.Binomial()

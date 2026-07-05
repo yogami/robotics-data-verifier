@@ -443,31 +443,60 @@ def run_production_orchestrator(infection, seed):
             })
 
 if __name__ == "__main__":
-    # --- PHASE 1: Baseline Run ---
-    print("PHASE 1: Launching Baseline Run (Infection=0, Seed=1001)...")
+    import yaml as _yaml
+    
+    # Load manifest for canary gate config
+    with open("scratch/experiment_manifest.yaml", "r") as _mf:
+        _manifest = _yaml.safe_load(_mf.read())
+    
+    canary_config = _manifest.get("canary_gate", {})
+    min_success_rate = canary_config.get("min_clean_success_rate", 0.05)
+    auto_abort = canary_config.get("auto_abort", True)
+    
+    # --- PHASE 1: Canary Run ---
+    print("PHASE 1: Canary Run (Infection=0, Seed=1001)...")
+    print(f"  Canary gate: model must achieve >= {min_success_rate*100:.1f}% success on clean data.")
     run_production_orchestrator(0, 1001)
     
     if get_job_status(0, 1001) != "SUCCESS":
-        print("Baseline run failed. Pausing orchestrator loop.")
+        print("Canary run failed to complete. Aborting.")
         exit(1)
         
-    print("\n" + "="*50)
-    print("BASELINE COMPLETED SUCCESSFULLY.")
-    
-    # Read stats from ledger
+    # Read actual success rate from ledger
+    canary_success_rate = 0.0
     try:
         with open("verification_ledger.jsonl", "r") as f:
             lines = f.readlines()
-            # Find baseline entry
             baseline_entries = [json.loads(l) for l in lines if '"infection": 0' in l and '"seed": 1001' in l]
             if baseline_entries:
                 entry = baseline_entries[-1]
                 episodes = entry.get("episodes", [])
-                successes = sum(1 for e in episodes if e.get("max_reward", 0) >= 4.0)
-                print(f"Stats: {successes} / {len(episodes)} successes ({successes/len(episodes)*100:.1f}%)")
+                if episodes:
+                    successes = sum(1 for e in episodes if e.get("max_reward", 0) >= 4.0)
+                    canary_success_rate = successes / len(episodes)
+                    print(f"Canary result: {successes} / {len(episodes)} successes ({canary_success_rate*100:.1f}%)")
     except Exception as e:
-        print(f"Failed to load baseline stats: {e}")
+        print(f"Failed to read canary stats: {e}")
+        canary_success_rate = 0.0
 
+    print("\n" + "="*50)
+    if canary_success_rate < min_success_rate:
+        print(f"CANARY GATE FAILED: {canary_success_rate*100:.1f}% < {min_success_rate*100:.1f}% minimum.")
+        print("The current architecture cannot solve this task on clean data.")
+        print("Escalation required: switch to a higher-capacity architecture before re-running.")
+        if auto_abort:
+            print("auto_abort=true: Halting sweep. No further jobs will be dispatched.")
+            print(f"Cost of this failure: 1 job (~€0.40). Saved: 24 jobs (~€9.60).")
+            exit(2)  # Exit 2 = canary failed (distinct from crash=1)
+        else:
+            choice = input("Override canary gate? [FORCE / ABORT]: ").strip().upper()
+            if choice != "FORCE":
+                print("Aborting sweep.")
+                exit(0)
+            print("WARNING: Canary gate overridden by human. Proceeding despite low baseline success.")
+    else:
+        print(f"CANARY GATE PASSED: {canary_success_rate*100:.1f}% >= {min_success_rate*100:.1f}%")
+    
     print("Attestation Level: spot_checked_interim")
     print("WARNING: EXPLORATORY RUN. This data requires an interim spot-check before use in publication.")
     
@@ -479,7 +508,7 @@ if __name__ == "__main__":
         print("Aborting sweep.")
         exit(0)
         
-    # --- PHASE 2: Complete Sweep Sweep ---
+    # --- PHASE 2: Full Sweep ---
     infections = [0, 25, 50, 75, 100]
     seeds = [1001, 2002, 3003, 4004, 5005]
     
@@ -491,3 +520,4 @@ if __name__ == "__main__":
             run_production_orchestrator(inf, sd)
             
     print("Sweep complete. Run mixed_effects_model.py for statistics.")
+
