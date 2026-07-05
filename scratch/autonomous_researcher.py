@@ -117,11 +117,9 @@ def run_ssh_training(infection, seed):
     commit_sha = subprocess.check_output("git rev-parse HEAD", shell=True).decode('utf-8').strip()
     print(f"SSH: Pinning training code to local commit SHA: {commit_sha}")
     
-    # 1. Force Git clone and checkout the exact audited commit on RunPod
-    print("SSH: Cloning trusted training code from GitHub and checking out commit...")
     cmd_clone = (
         f"{ssh_prefix} "
-        f"\"rm -rf /root/robotics-data-verifier && "
+        f"\"rm -rf /root/robotics-data-verifier && mkdir -p /root/outputs && "
         f"git clone https://{GITHUB_PAT}@github.com/{REPO_OWNER}/{REPO_NAME}.git /root/robotics-data-verifier && "
         f"cd /root/robotics-data-verifier && git checkout -q {commit_sha} && "
         f"pip install --no-cache-dir pandas pyarrow huggingface-hub pyyaml && "
@@ -194,7 +192,7 @@ def run_ssh_training(infection, seed):
     print(f"SSH: Hugging Face upload verified at immutable commit SHA: {hf_commit_sha}")
     return hf_commit_sha, commit_sha
 
-def trigger_github_workflow(hf_commit_sha, infection, seed):
+def trigger_github_workflow(hf_commit_sha, infection, seed, phase="sweep_logging", attestation_level="spot_checked_interim"):
     if not GITHUB_PAT:
         raise ValueError("GITHUB_PAT is not set.")
         
@@ -220,7 +218,9 @@ def trigger_github_workflow(hf_commit_sha, infection, seed):
             "eval_commit_sha": commit_sha, # Pass exact Git commit SHA of codebase to verify
             "infection_level": str(infection),
             "seed": str(seed),
-            "nonce": nonce
+            "nonce": nonce,
+            "phase": phase,
+            "attestation_level": attestation_level
         }
     }
     
@@ -306,7 +306,9 @@ executor_tools = [
             "properties": {
                 "checkpoint_branch": {"type": "string", "description": "The Hugging Face commit SHA"},
                 "infection": {"type": "integer"},
-                "seed": {"type": "integer"}
+                "seed": {"type": "integer"},
+                "phase": {"type": "string", "description": "The phase of evaluation (baseline_check or sweep_logging)"},
+                "attestation_level": {"type": "string", "description": "The attestation level (spot_checked_interim or tee_attested)"}
             },
             "required": ["checkpoint_branch", "infection", "seed"]
         }
@@ -406,7 +408,9 @@ def run_production_orchestrator(infection, seed):
                         })
                 elif block.name == "trigger_github_evaluation":
                     try:
-                        res = trigger_github_workflow(block.input["checkpoint_branch"], block.input["infection"], block.input["seed"])
+                        phase = block.input.get("phase", "sweep_logging")
+                        attest = block.input.get("attestation_level", "spot_checked_interim")
+                        res = trigger_github_workflow(block.input["checkpoint_branch"], block.input["infection"], block.input["seed"], phase, attest)
                         update_job_status(infection, seed, "SUCCESS", result=res)
                         tool_results.append({
                             "type": "tool_result",
@@ -438,6 +442,24 @@ if __name__ == "__main__":
         
     print("\n" + "="*50)
     print("BASELINE COMPLETED SUCCESSFULLY.")
+    
+    # Read stats from ledger
+    try:
+        with open("verification_ledger.jsonl", "r") as f:
+            lines = f.readlines()
+            # Find baseline entry
+            baseline_entries = [json.loads(l) for l in lines if '"infection": 0' in l and '"seed": 1001' in l]
+            if baseline_entries:
+                entry = baseline_entries[-1]
+                episodes = entry.get("episodes", [])
+                successes = sum(1 for e in episodes if e.get("max_reward", 0) >= 4.0)
+                print(f"Stats: {successes} / {len(episodes)} successes ({successes/len(episodes)*100:.1f}%)")
+    except Exception as e:
+        print(f"Failed to load baseline stats: {e}")
+
+    print("Attestation Level: spot_checked_interim")
+    print("WARNING: EXPLORATORY RUN. This data requires an interim spot-check before use in publication.")
+    
     print("Human Sign-off Required: Type PROCEED to launch remaining 24 sweep seeds.")
     print("="*50 + "\n")
     
