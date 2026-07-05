@@ -44,13 +44,13 @@ jobs:
     steps:
       - name: Verify Branch Protection (Hard API Gate)
         env:
+          EVAL_PAT: ${{ secrets.EVAL_PAT }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Use API to ensure branch protection is active for main
-          # Note: this requires admin:read or equivalent scopes depending on repo settings.
-          # We fail closed if we cannot verify.
+          # Use EVAL_PAT if available, otherwise default to GITHUB_TOKEN
+          TOKEN="${EVAL_PAT:-$GITHUB_TOKEN}"
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Authorization: Bearer $TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
             https://api.github.com/repos/${{ github.repository }}/branches/main/protection)
           
