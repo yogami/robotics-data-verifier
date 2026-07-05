@@ -38,7 +38,13 @@ class AlohaChunkedDataset(Dataset):
             action_cols = feature_cols[mid:]
 
         def _flatten_cols(cols):
-            return df[cols].fillna(0.0).values.astype(np.float32)
+            res = []
+            for col in cols:
+                arr = np.stack(df[col].values)
+                if len(arr.shape) == 1:
+                    arr = arr.reshape(-1, 1)
+                res.append(arr)
+            return np.concatenate(res, axis=1).astype(np.float32)
 
         self.obs = torch.tensor(_flatten_cols(state_cols), dtype=torch.float32)
         self.actions = torch.tensor(_flatten_cols(action_cols), dtype=torch.float32)
