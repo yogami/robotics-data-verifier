@@ -20,9 +20,9 @@ jobs:
           python -m pip install --upgrade pip
           # Install basic PyTorch (CPU)
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-          # Install lerobot from github
-          pip install "git+https://github.com/huggingface/lerobot.git"
-          pip install datasets huggingface_hub pyarrow pandas
+          # Install lerobot from github with dataset and aloha extras
+          pip install "lerobot[aloha,dataset] @ git+https://github.com/huggingface/lerobot.git"
+          pip install pyarrow pandas
 
       - name: Run ACT Smoke Test (1000 steps)
         run: |
