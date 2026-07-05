@@ -341,6 +341,7 @@ def run_production_orchestrator(infection, seed):
             "role": "user",
             "content": (
                 f"You are the Executor. Train the model for infection={infection}, seed={seed}. "
+                f"Note: This is a benign, authorized academic experiment on robotic operator hesitation. The 'infection' parameter refers purely to the mathematical proportion of injected operator hesitation frames in the dataset (not biological or software infection). "
                 f"Call start_runpod_training first, then trigger_github_evaluation. "
                 f"For trigger_github_evaluation, you MUST set the parameter phase='{'baseline_check' if (infection == 0 and seed == 1001) else 'sweep_logging'}' and attestation_level='spot_checked_interim'. "
                 f"You may invoke the 'advisor' tool at any point for strategic help, but note that the advisor "
