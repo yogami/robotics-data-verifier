@@ -33,14 +33,12 @@ jobs:
             --env.type=aloha \
             --dataset.repo_id=gopalyami/aloha-act-sweep \
             --output_dir=outputs/act_smoke_test \
-            --training.offline_steps=1000 \
-            --eval_freq=1000 \
+            --steps=1000 \
             --save_freq=1000 \
             --log_freq=10 \
             --save_checkpoint=false \
             --policy.push_to_hub=false \
-            --wandb.enable=false \
-            --device=cpu
+            --wandb.enable=false
           
       - name: Verify Training Outputs
         run: |
