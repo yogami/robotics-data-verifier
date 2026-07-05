@@ -144,10 +144,10 @@ def run_ssh_training(infection, seed):
     
     cmd_train = (
         f"{ssh_prefix} "
-        f"\"nohup python3 /root/robotics-data-verifier/train_act.py "
+        f"\"nohup bash -c 'pip install \\\"lerobot[aloha,dataset,training] @ git+https://github.com/huggingface/lerobot.git\\\" && pip install pyarrow pandas datasets huggingface_hub && python3 /root/robotics-data-verifier/train_act.py "
         f"--parquet {parquet_path} --output-model {model_output} --output-eval {eval_output} "
         f"--epochs 100 --hf-repo {HF_REPO} --hf-token \\$HF_TOKEN --hf-branch {branch_name} "
-        f"--seed {seed} --infection-level {infection} "
+        f"--seed {seed} --infection-level {infection}' "
         f"> /root/train.log 2>&1 & echo \\$!\""
     )
     pid = run_cmd_with_retry(cmd_train, check=True, return_output=True)
