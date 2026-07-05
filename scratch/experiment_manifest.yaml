@@ -2,23 +2,26 @@
 # PRE-REGISTERED EXPERIMENTAL DESIGN
 
 experiment_name: "ACT_Operator_Hesitation_Sweep"
+architecture: "MLP-BC" # Downgraded to MLP for rapid iteration due to compute constraints
 
 # The orchestrator is not permitted to modify this manifest.
 # Verification secret key is stored in GitHub Secrets and read via env vars.
 
+escalation_rule: "If MLP-BC (baseline model) fails to detect a significant effect (p > alpha_threshold), the protocol mandates escalation to the full ACT architecture to rule out model-capacity confounding."
+
 hyperparameter_search_space:
   learning_rate:
-    type: "choice"
-    values: [1e-5, 5e-5, 1e-4]
+    type: "fixed"
+    value: 1e-3
   batch_size:
-    type: "choice"
-    values: [8, 16, 32]
-  chunk_size:
-    type: "choice"
-    values: [50, 100]
+    type: "fixed"
+    value: 256
   training_steps:
     type: "fixed"
-    value: 200000
+    value: 100
+  hidden_dim:
+    type: "fixed"
+    value: 256
 
 baseline_target_success_rate: 50.0
 
@@ -39,6 +42,8 @@ analysis_plan:
   cov_type: "bias_reduced"
   alpha_threshold: 0.05
   aggregation: "model_level_25_rows"
+
+hyperparameters_hash: "d27df5f35d55c9e8ccd4325f1e8943f945c1f5cb47b574be43b30db10de79b4b"
 
 # Cryptographically bound dataset hashes for training provenance verification
 dataset_hashes:

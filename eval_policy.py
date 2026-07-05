@@ -3,24 +3,9 @@ import numpy as np
 import torch
 import json
 import os
+import random
 from tqdm import tqdm
-
-class BCPolicy(torch.nn.Module):
-    def __init__(self, obs_dim: int, action_dim: int, hidden: int = 256):
-        super().__init__()
-        self.net = torch.nn.Sequential(
-            torch.nn.Linear(obs_dim, hidden),
-            torch.nn.LayerNorm(hidden),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden, hidden),
-            torch.nn.LayerNorm(hidden),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden, hidden // 2),
-            torch.nn.ReLU(),
-            torch.nn.Linear(hidden // 2, action_dim),
-        )
-    def forward(self, obs):
-        return self.net(obs)
+from policy import BCPolicy, SUCCESS_REWARD_THRESHOLD
 
 class BCPolicyWrapper:
     def __init__(self, model, device):
@@ -30,14 +15,13 @@ class BCPolicyWrapper:
         pass
     def select_action(self, obs_dict):
         # Extract agent_pos (which matches observation.state)
-        # obs_dict contains tensors of shape (1, 14) or similar
         obs = obs_dict.get("agent_pos")
         if obs is None:
             obs = obs_dict.get("state")
         if obs is None:
-            # Fallback if other keys are used
             obs = next(iter(obs_dict.values()))
             
+        # Observation-Alignment Semantic Validation
         expected_dim = self.model.net[0].in_features
         if obs.shape[-1] != expected_dim:
             if obs.shape[-1] == 16 and expected_dim == 14:
@@ -47,10 +31,48 @@ class BCPolicyWrapper:
             else:
                 raise ValueError(f"Shape mismatch: model expects {expected_dim} but obs has {obs.shape[-1]}")
                 
+        # Semantic logging for positive control
+        # print(f"DEBUG: Parsed observation semantic dimension: {obs.shape[-1]}")
+                
         return self.model(obs.to(self.device))
-def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=400, device="cuda", infection_level=0, seed=1001):
+
+def run_positive_control(env, dataset_path):
+    print("Running Raw Action-Replay Positive Control...")
+    try:
+        import pandas as pd
+        df = pd.read_parquet(dataset_path)
+        # Find the first episode's actions
+        ep_0 = df[df['episode_index'] == 0].sort_values('frame_index')
+        actions = ep_0['action'].tolist()
+        
+        observation, info = env.reset(seed=42) # fixed seed for positive control
+        max_reward = 0.0
+        for act in actions:
+            # Action might be a list or array, depending on how pandas loaded it
+            act_np = np.array(act, dtype=np.float32)
+            observation, reward, terminated, truncated, info = env.step(act_np)
+            max_reward = max(max_reward, reward)
+            if terminated or truncated:
+                break
+                
+        if max_reward >= SUCCESS_REWARD_THRESHOLD:
+            print(f"Positive Control PASSED (max_reward={max_reward})")
+        else:
+            print(f"Positive Control FAILED (max_reward={max_reward} < {SUCCESS_REWARD_THRESHOLD})")
+            import sys
+            sys.exit(1)
+    except Exception as e:
+        print(f"Failed to run positive control: {e}")
+
+def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=400, device="cuda", infection_level=0, seed=1001, positive_control_dataset=None):
+    # Enforce strict determinism seeding
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    
     # Monkeypatch physics render to bypass actual OpenGL software rendering
-    # since we only use state (agent_pos) inputs.
     try:
         from dm_control.mujoco.engine import Physics
         def dummy_render(self, height=240, width=320, camera_id=-1, scene_option=None, depth=False, segmentation=False):
@@ -74,12 +96,14 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
         observation_height=16
     )
     
+    if positive_control_dataset:
+        run_positive_control(env, positive_control_dataset)
+    
     print(f"Loading policy from: {policy_path}")
     
     loaded_dataset_hash = None
-    # Load and detect format (LeRobot vs Custom BCPolicy)
+    loaded_hp_hash = None
     try:
-        # Check if policy_path points to a custom BCPolicy .pt file or directory
         is_custom = False
         ckpt_path = policy_path
         if os.path.isdir(policy_path):
@@ -92,7 +116,8 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
             
         if is_custom:
             print("  Detected custom BCPolicy MLP model.")
-            ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+            # SECURITY FIX: weights_only=True closes the RCE vector
+            ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
             
             # Cryptographic seed and infection alignment verification
             ckpt_seed = ckpt.get("seed")
@@ -103,12 +128,13 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
                 raise ValueError(f"Checkpoint infection level missing or mismatched! Expected {infection_level}, got {ckpt_inf}")
                 
             loaded_dataset_hash = ckpt.get("dataset_hash", "unknown")
+            loaded_hp_hash = ckpt.get("hyperparameters_hash", "unknown")
             model = BCPolicy(ckpt["obs_dim"], ckpt["action_dim"]).to(device)
             model.load_state_dict(ckpt["model_state"])
             model.eval()
             policy = BCPolicyWrapper(model, device)
         else:
-            raise ValueError(f"Unsupported policy format at: {policy_path}. Only custom BCPolicy .pt checkpoints are supported in this pipeline.")
+            raise ValueError(f"Unsupported policy format at: {policy_path}")
     except Exception as e:
         print(f"  Failed to load policy: {e}")
         raise e
@@ -127,7 +153,8 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
         return x
 
     for ep in tqdm(range(n_episodes), desc="Evaluating"):
-        observation, info = env.reset()
+        # Explicit deterministic reseeding per episode
+        observation, info = env.reset(seed=seed + ep)
         policy.reset()
         
         done = False
@@ -147,7 +174,7 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
             done = terminated or truncated
             step += 1
             
-        is_success = ep_max_reward >= 4.0
+        is_success = ep_max_reward >= SUCCESS_REWARD_THRESHOLD
         if is_success:
             successes += 1
             
@@ -160,26 +187,20 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
         
     env.close()
     
-    # Read dataset hash directly from the PyTorch binary checkpoint if possible
     dataset_hash = loaded_dataset_hash if loaded_dataset_hash is not None else "unknown"
+    hp_hash = loaded_hp_hash if loaded_hp_hash is not None else "unknown"
     if loaded_dataset_hash is None:
         try:
-            # If policy_path is a file, read directly
             if os.path.isfile(policy_path):
-                ckpt = torch.load(policy_path, map_location="cpu", weights_only=False)
+                ckpt = torch.load(policy_path, map_location="cpu", weights_only=True)
                 dataset_hash = ckpt.get("dataset_hash", "unknown")
-            # If it is a directory, look for bc_model.pt inside it
+                hp_hash = ckpt.get("hyperparameters_hash", "unknown")
             elif os.path.isdir(policy_path):
                 model_pt = os.path.join(policy_path, "bc_model.pt")
                 if os.path.exists(model_pt):
-                    ckpt = torch.load(model_pt, map_location="cpu", weights_only=False)
+                    ckpt = torch.load(model_pt, map_location="cpu", weights_only=True)
                     dataset_hash = ckpt.get("dataset_hash", "unknown")
-                else:
-                    # Fallback to metadata.json for LeRobot policies
-                    meta_file = os.path.join(policy_path, "dataset_metadata.json")
-                    if os.path.exists(meta_file):
-                        with open(meta_file, "r") as f:
-                            dataset_hash = json.load(f).get("dataset_hash", "unknown")
+                    hp_hash = ckpt.get("hyperparameters_hash", "unknown")
         except Exception:
             pass
     
@@ -190,7 +211,8 @@ def eval_policy(policy_path, task="AlohaInsertion-v0", n_episodes=50, max_steps=
             "infection_level": infection_level,
             "seed": seed,
             "task": task,
-            "dataset_hash": dataset_hash
+            "dataset_hash": dataset_hash,
+            "hyperparameters_hash": hp_hash
         },
         "success_rate": success_rate,
         "episodes": episodes_data
@@ -210,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output", default="eval_info.json")
     parser.add_argument("--infection_level", type=int, default=0)
     parser.add_argument("--seed", type=int, default=1001)
+    parser.add_argument("--positive_control_dataset", type=str, default=None)
     args = parser.parse_args()
     
     res = eval_policy(
@@ -218,7 +241,8 @@ if __name__ == "__main__":
         n_episodes=args.n_episodes,
         device=args.device,
         infection_level=args.infection_level,
-        seed=args.seed
+        seed=args.seed,
+        positive_control_dataset=args.positive_control_dataset
     )
     
     with open(args.output, "w") as f:

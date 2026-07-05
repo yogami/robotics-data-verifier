@@ -19,6 +19,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import hashlib
+from policy import BCPolicy
+
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+torch.use_deterministic_algorithms(True)
 
 def compute_file_sha256(path: str) -> str:
     h = hashlib.sha256()
@@ -26,28 +30,6 @@ def compute_file_sha256(path: str) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
-
-# ─── Model ────────────────────────────────────────────────────────────────────
-
-class BCPolicy(nn.Module):
-    """Simple MLP Behavioral Cloning policy."""
-    def __init__(self, obs_dim: int, action_dim: int, hidden: int = 256):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.LayerNorm(hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.LayerNorm(hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden // 2),
-            nn.ReLU(),
-            nn.Linear(hidden // 2, action_dim),
-        )
-
-    def forward(self, obs):
-        return self.net(obs)
-
 
 # ─── Dataset ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +102,12 @@ def train(parquet_path: str, episode_ids: list[int] | None, output_path: str,
           hf_repo: str = None, hf_token: str = None, hf_branch: str = None,
           seed: int = None, infection_level: int = None):
 
+    if seed is not None:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+            
     print(f"\n{'='*60}")
     print(f"Training on: {parquet_path}")
     print(f"Episodes: {episode_ids if episode_ids is not None else 'ALL'}")
@@ -161,6 +149,18 @@ def train(parquet_path: str, episode_ids: list[int] | None, output_path: str,
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     dataset_hash = dataset.dataset_hash
+    
+    import json
+    hyperparameters = {
+        "learning_rate": lr,
+        "batch_size": batch_size,
+        "training_steps": epochs,
+        "architecture": "MLP-BC",
+        "hidden_dim": 256
+    }
+    canonical_hp = json.dumps(hyperparameters, sort_keys=True, separators=(',', ':'))
+    hp_hash = hashlib.sha256(canonical_hp.encode('utf-8')).hexdigest()
+    
     torch.save({
         "model_state": model.state_dict(),
         "obs_dim": dataset.obs_dim,
@@ -168,6 +168,7 @@ def train(parquet_path: str, episode_ids: list[int] | None, output_path: str,
         "final_loss": train_losses[-1],
         "train_losses": train_losses,
         "dataset_hash": dataset_hash,
+        "hyperparameters_hash": hp_hash,
         "seed": seed,
         "infection_level": infection_level,
     }, output_path)
@@ -208,7 +209,7 @@ def evaluate(model_path: str, n_episodes: int = 50, device: str = "cuda") -> dic
         print(f"  Cannot import gym_aloha: {e}")
         return {"success_rate": -1.0, "mean_reward": -1.0, "n_episodes": n_episodes}
 
-    ckpt = torch.load(model_path, map_location=device, weights_only=False)
+    ckpt = torch.load(model_path, map_location=device, weights_only=True)
     model = BCPolicy(ckpt["obs_dim"], ckpt["action_dim"]).to(device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()

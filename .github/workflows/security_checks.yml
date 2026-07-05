@@ -1,0 +1,66 @@
+name: Security Checks
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Run hourly
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  check-branch-protection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Branch Protection (Hard API Gate)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Use API to ensure branch protection is active for main
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/branches/main/protection)
+          
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "CRITICAL ERROR: Branch protection on main is not active or cannot be verified! (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          echo "Branch protection verified active."
+
+  check-codeowners:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify CODEOWNERS exists and has strict rules
+        run: |
+          if [ ! -f "CODEOWNERS" ] && [ ! -f ".github/CODEOWNERS" ]; then
+            echo "CRITICAL ERROR: CODEOWNERS file is missing!"
+            exit 1
+          fi
+          echo "CODEOWNERS file found."
+          
+          # Check for specific files in CODEOWNERS (rudimentary check)
+          # eval_policy.py, train_bc_policy.py, scratch/verify_logs.py, scratch/mixed_effects_model.py, .github/workflows/**, scratch/sign_payload.py, policy.py, scratch/experiment_manifest.yaml
+          REQUIRED="eval_policy.py train_bc_policy.py scratch/verify_logs.py scratch/mixed_effects_model.py scratch/sign_payload.py policy.py scratch/experiment_manifest.yaml"
+          CODEOWNERS_FILE="CODEOWNERS"
+          [ -f ".github/CODEOWNERS" ] && CODEOWNERS_FILE=".github/CODEOWNERS"
+          
+          MISSING=0
+          for req in $REQUIRED; do
+            if ! grep -q "$req" "$CODEOWNERS_FILE"; then
+              echo "CRITICAL ERROR: Missing CODEOWNERS rule for $req"
+              MISSING=1
+            fi
+          done
+          
+          if ! grep -q "\.github/workflows/" "$CODEOWNERS_FILE"; then
+             echo "CRITICAL ERROR: Missing CODEOWNERS rule for .github/workflows/"
+             MISSING=1
+          fi
+          
+          if [ $MISSING -eq 1 ]; then
+            exit 1
+          fi
+          
+          echo "All required files are under CODEOWNERS protection."

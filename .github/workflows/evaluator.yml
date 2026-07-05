@@ -1,6 +1,6 @@
 name: Model Evaluation (Trusted Boundary)
 
-run-name: Model Eval - Inf ${{ inputs.infection_level }} - Seed ${{ inputs.seed }} - Nonce ${{ inputs.nonce }}
+run-name: Model Eval - Inf ${{ inputs.infection_level }} - Seed ${{ inputs.seed }} - Nonce ${{ inputs.nonce }} - Phase ${{ inputs.phase }}
 
 on:
   workflow_dispatch:
@@ -29,9 +29,50 @@ on:
         description: 'Unique execution nonce to prevent API polling races'
         required: true
         type: string
+      phase:
+        description: 'The execution phase (e.g., baseline_check, sweep_logging)'
+        required: true
+        type: string
+      attestation_level:
+        description: 'The attestation level of the run (tee_attested or spot_checked_interim)'
+        required: true
+        type: string
 
 jobs:
+  pre_flight_checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Branch Protection (Hard API Gate)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Use API to ensure branch protection is active for main
+          # Note: this requires admin:read or equivalent scopes depending on repo settings.
+          # We fail closed if we cannot verify.
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/branches/main/protection)
+          
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "CRITICAL ERROR: Branch protection on main is not active or cannot be verified! (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+          
+      - name: Interim Protocol Sunset Check
+        run: |
+          ATTESTATION="${{ inputs.attestation_level }}"
+          if [ "$ATTESTATION" = "spot_checked_interim" ]; then
+            CURRENT_DATE=$(date +%s)
+            SUNSET_DATE=$(date -d "2026-09-01" +%s)
+            if [ "$CURRENT_DATE" -gt "$SUNSET_DATE" ]; then
+              echo "CRITICAL ERROR: The interim spot-check protocol sunset clause (Sept 1, 2026) has expired. Only tee_attested runs are allowed."
+              exit 1
+            fi
+          fi
+
   evaluate:
+    needs: pre_flight_checks
     runs-on: ubuntu-latest
     
     steps:
@@ -47,7 +88,7 @@ jobs:
         # This prevents any TOCTOU updates to main between training and evaluation steps.
         run: |
           current_sha=$(git rev-parse HEAD)
-          expected_sha="${{ github.event.inputs.eval_commit_sha }}"
+          expected_sha="${{ inputs.eval_commit_sha }}"
           echo "Current main branch HEAD SHA: $current_sha"
           echo "Expected orchestrator pinned SHA: $expected_sha"
           if [ "$current_sha" != "$expected_sha" ]; then
@@ -79,8 +120,8 @@ jobs:
           python -c "
           from huggingface_hub import hf_hub_download
           import os
-          hf_repo = '${{ github.event.inputs.huggingface_repo }}'
-          revision = '${{ github.event.inputs.hf_revision }}'
+          hf_repo = '${{ inputs.huggingface_repo }}'
+          revision = '${{ inputs.hf_revision }}'
           token = os.environ.get('HF_TOKEN')
           token = token if token else None
           print(f'Downloading from {hf_repo} revision {revision}...')
@@ -99,37 +140,78 @@ jobs:
           MUJOCO_GL: osmesa
           PYOPENGL_PLATFORM: osmesa
         run: |
-          mkdir -p outputs/infected_${{ github.event.inputs.infection_level }}_seed_${{ github.event.inputs.seed }}
+          mkdir -p outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}
           
           python eval_policy.py \
             --policy_path checkpoint/bc_model.pt \
             --task AlohaInsertion-v0 \
             --n_episodes 500 \
             --device cpu \
-            --output outputs/infected_${{ github.event.inputs.infection_level }}_seed_${{ github.event.inputs.seed }}/eval_info.json \
-            --infection_level ${{ github.event.inputs.infection_level }} \
-            --seed ${{ github.event.inputs.seed }}
+            --output outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}/eval_info.json \
+            --infection_level ${{ inputs.infection_level }} \
+            --seed ${{ inputs.seed }}
           
-      - name: Cryptographic Verification
+      - name: Generate Verification Payload
+        # We do NOT pass EVAL_PRIVATE_KEY here. We only generate the unsigned payload.
+        run: |
+          json_path="outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}/eval_info.json"
+          manifest_path="scratch/experiment_manifest.yaml"
+          phase="${{ inputs.phase }}"
+          infection=${{ inputs.infection_level }}
+          seed=${{ inputs.seed }}
+          run_id="${{ github.run_id }}"
+          eval_commit_sha="${{ inputs.eval_commit_sha }}"
+          nonce="${{ inputs.nonce }}"
+          attestation_level="${{ inputs.attestation_level }}"
+          
+          python scratch/verify_logs.py "$json_path" "$manifest_path" "$phase" "$infection" "$seed" "$run_id" "$eval_commit_sha" "$nonce" "$attestation_level"
+          
+      - name: Upload Unsigned Payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-payload
+          path: unsigned_payload.json
+
+      - name: Upload Eval Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-info-infected-${{ inputs.infection_level }}-seed-${{ inputs.seed }}
+          path: outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}/eval_info.json
+
+  sign_results:
+    needs: evaluate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install cryptography
+        run: pip install cryptography
+
+      - name: Download Unsigned Payload
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-payload
+          
+      - name: Sign Payload
         env:
           EVAL_PRIVATE_KEY: ${{ secrets.EVAL_PRIVATE_KEY }}
         run: |
-          json_path="outputs/infected_${{ github.event.inputs.infection_level }}_seed_${{ github.event.inputs.seed }}/eval_info.json"
-          manifest_path="scratch/experiment_manifest.yaml"
-          phase="sweep_logging"
-          infection=${{ github.event.inputs.infection_level }}
-          seed=${{ github.event.inputs.seed }}
-          
-          python scratch/verify_logs.py "$json_path" "$manifest_path" "$phase" "$infection" "$seed"
+          python scratch/sign_payload.py unsigned_payload.json > signed_payload.json
+
+      - name: Append to Ledger
+        run: |
+          cat signed_payload.json >> verification_ledger.jsonl
           
       - name: Upload Cryptographic Ledger
         uses: actions/upload-artifact@v4
         with:
-          name: verification-ledger-infected-${{ github.event.inputs.infection_level }}-seed-${{ github.event.inputs.seed }}
+          name: verification-ledger-infected-${{ inputs.infection_level }}-seed-${{ inputs.seed }}
           path: verification_ledger.jsonl
-          
-      - name: Upload Eval Info
-        uses: actions/upload-artifact@v4
-        with:
-          name: eval-info-infected-${{ github.event.inputs.infection_level }}-seed-${{ github.event.inputs.seed }}
-          path: outputs/infected_${{ github.event.inputs.infection_level }}_seed_${{ github.event.inputs.seed }}/eval_info.json

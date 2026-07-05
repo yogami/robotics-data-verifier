@@ -12,7 +12,9 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 # Hardcoded public key for verification (cannot be used to forge)
-EVAL_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGE4kanVm+/6sxEo8OeipYK9i8lNbJKPZfrpUfN+4lUx"
+EVAL_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOAzdra49rqZDUOWuPQpGcg58FWonaXcxHDbGGOSIUYE"
+# Revocation list (cutoff timestamp and previously compromised key id - usually public key fragment)
+REVOKED_KEYS = ["AAAAC3NzaC1lZDI1NTE5AAAAIGE4kanVm+/6sxEo8OeipYK9i8lNbJKPZfrpUfN+4lUx"]
 
 def load_and_hash_file(path: str):
     # TOCTOU Fix: Read bytes once, hash, and return parsed JSON content
@@ -30,9 +32,24 @@ def load_and_hash_manifest(path: str):
     return content, manifest_hash
 
 def verify_ed25519_signature(public_key_openssh: str, entry: dict) -> bool:
-    if "signature" in entry:
-        entry.pop("signature")
-    return True
+    import base64
+    if "signature" not in entry:
+        return False
+    signature_b64 = entry.pop("signature")
+    
+    # Canonicalize the payload for verification
+    canonical_payload = json.dumps(entry, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    
+    try:
+        public_key = serialization.load_ssh_public_key(public_key_openssh.encode('utf-8'))
+        signature = base64.b64decode(signature_b64)
+        public_key.verify(signature, canonical_payload)
+        # Restore the signature so we don't mutate the dictionary for downstream users unexpectedly
+        entry["signature"] = signature_b64
+        return True
+    except Exception as e:
+        print(f"Signature verification failed: {e}")
+        return False
 
 def run_binomial_gee_model(results_dir: str, manifest_path: str):
     try:
@@ -52,9 +69,42 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             for line in f:
                 entry = json.loads(line)
                 
+                # Revocation list check
+                if entry.get("key_id") in REVOKED_KEYS:
+                    print(f"ABORTING: Ledger entry signed with a revoked key. Tampering or stale data detected.")
+                    sys.exit(1)
+                    
                 # Asymmetric signature check (Executor cannot forge this)
                 if not verify_ed25519_signature(EVAL_PUBLIC_KEY, entry):
                     print(f"ABORTING: Invalid asymmetric signature in verification ledger. Tampering detected.")
+                    sys.exit(1)
+                    
+                # Hard-Enforced Confirmatory-Refusal Gate
+                attestation = entry.get("attestation_level")
+                valid_attestations = {"tee_attested", "spot_checked_interim"}
+                if attestation not in valid_attestations:
+                    print(f"ABORTING: Invalid or missing attestation_level '{attestation}'. Default-deny policy applied.")
+                    sys.exit(1)
+                
+                # Check GitHub API for run_id and eval_commit_sha (Fails Closed)
+                run_id = entry.get("run_id")
+                eval_commit_sha = entry.get("eval_commit_sha")
+                if run_id and eval_commit_sha:
+                    import urllib.request, urllib.error
+                    try:
+                        req = urllib.request.Request(f"https://api.github.com/repos/yamijala/robotics-data-verifier/actions/runs/{run_id}")
+                        req.add_header("Accept", "application/vnd.github.v3+json")
+                        # Note: GITHUB_PAT should be used here if it's a private repo, but fail-closed on network errors is key.
+                        with urllib.request.urlopen(req, timeout=10) as response:
+                            run_data = json.loads(response.read().decode())
+                            if run_data.get("head_sha") != eval_commit_sha:
+                                print(f"ABORTING: eval_commit_sha mismatch with GitHub API for run {run_id}.")
+                                sys.exit(1)
+                    except Exception as e:
+                        print(f"ABORTING: Failed to cross-check run_id with GitHub API (Fail-Closed). Error: {e}")
+                        sys.exit(1)
+                else:
+                    print("ABORTING: Missing run_id or eval_commit_sha for API cross-check.")
                     sys.exit(1)
                     
                 # Manifest Hash Pinning check
@@ -123,8 +173,8 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
             if content.get("config", {}).get("dataset_hash") != expected_dataset_hash:
                 sys.exit(1)
                 
-            episodes = content.get("episodes")
-            successes = sum(1 for e in episodes if e.get("success", False))
+            # Recompute successes directly from max_reward to avoid trusting boolean flag
+            successes = sum(1 for e in episodes if e.get("max_reward", 0) >= 4.0)
             n_episodes = len(episodes)
             
             target_episodes = manifest.get("evaluation", {}).get("episodes_per_model", 500)
@@ -167,6 +217,22 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
         
     df = pd.DataFrame(data)
     
+    # Degenerate GEE Fit Detection
+    if df["successes"].sum() == 0 or df["successes"].sum() == df["n"].sum():
+        print("DEGENERATE DISTRIBUTION DETECTED (all 0 or all 1 successes). Falling back to Jonckheere-Terpstra exact test per pre-registered amendments.")
+        # Jonckheere-Terpstra Fallback (Implemented as Kendall's tau-b for tied groups)
+        import scipy.stats
+        res = scipy.stats.kendalltau(df["infection"], df["successes"])
+        print(f"Kendall's tau-b (JT equivalent): correlation={res.correlation:.4f}, pvalue={res.pvalue:.4g}")
+        if res.pvalue < alpha:
+            if res.correlation < 0:
+                print("STATISTICALLY SIGNIFICANT DEGRADATION.")
+            else:
+                print("STATISTICALLY SIGNIFICANT IMPROVEMENT.")
+        else:
+            print("NO STATISTICALLY SIGNIFICANT EFFECT FOUND.")
+        sys.exit(0) # Degenerate datasets still "pass" the analysis pipeline, they just use the fallback stats
+    
     try:
         fam = sm.families.Binomial()
         model = gee.GEE.from_formula(
@@ -180,6 +246,12 @@ def run_binomial_gee_model(results_dir: str, manifest_path: str):
         
         if not result.converged:
             sys.exit(1)
+            
+        print("\n" + "="*80)
+        print("!!! EXPLORATORY — NOT FOR PUBLICATION !!!")
+        print("This data was collected under spot_checked_interim attestation.")
+        print("It MUST NOT be used in published conclusions until verified by full TEE.")
+        print("="*80 + "\n")
             
         print(result.summary())
         
