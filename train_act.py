@@ -153,10 +153,11 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Branch creation warning: {e}")
             
-        api.upload_folder(
+        commit_info = api.upload_folder(
             folder_path=args.output_model,
             repo_id=args.hf_repo,
             repo_type="model",
             revision=args.hf_branch,
             commit_message=f"ACT training infection {args.infection_level} seed {args.seed}"
         )
+        print(f"HF_COMMIT_SHA={commit_info.oid}")
