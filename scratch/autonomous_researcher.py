@@ -131,6 +131,11 @@ def run_ssh_training(infection, seed):
     cleanup_cmd = f"{ssh_prefix} \"pkill -f train_bc_policy.py || true; pkill -f runpod_watchdog.py || true\""
     run_cmd_with_retry(cleanup_cmd, check=False)
     
+    print(f"SSH: Uploading dataset for infection={infection} to RunPod...")
+    run_cmd_with_retry(f"{ssh_prefix} \"mkdir -p /root/data\"", check=True)
+    scp_cmd = f"scp -o StrictHostKeyChecking=no -P {RUNPOD_PORT} -i ~/.ssh/id_ed25519 data/infection_{infection}.parquet root@{RUNPOD_IP}:/root/data/"
+    run_cmd_with_retry(scp_cmd, check=True)
+    
     # 2. Launch training in the background and capture the PID
     print("SSH: Launching train_bc_policy.py from the trusted git checkout...")
     parquet_path = f"/root/data/infection_{infection}.parquet"
