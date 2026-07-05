@@ -30,10 +30,11 @@ jobs:
           # This is to verify that ACT can initialize and loss decreases on this task.
           python -m lerobot.scripts.lerobot_train \
             --policy.type=act \
-            --env.type=aloha \
             --dataset.repo_id=lerobot/aloha_sim_insertion_human \
             --output_dir=outputs/act_smoke_test \
             --steps=100 \
+            --eval.batch_size=0 \
+            --eval.n_episodes=0 \
             --save_freq=100 \
             --log_freq=10 \
             --save_checkpoint=false \
