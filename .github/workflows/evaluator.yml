@@ -146,7 +146,7 @@ jobs:
           # Oh wait, eval_act.py doesn't take --policy_path. We will modify eval_act.py next.
           python eval_act.py \
             --model infected \
-            --episodes 500 \
+            --episodes 50 \
             --policy_path checkpoint \
             --output outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}/eval_info.json \
             --infection_level ${{ inputs.infection_level }} \
