@@ -225,7 +225,7 @@ def trigger_github_workflow(hf_commit_sha, infection, seed, phase="sweep_logging
     time.sleep(15)
     
     runs_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/actions/runs"
-    for _ in range(120): # Poll up to 60 mins
+    for _ in range(360): # Poll up to 180 mins
         r = requests.get(runs_url, headers=headers)
         if r.status_code == 200:
             runs = r.json().get("workflow_runs", [])

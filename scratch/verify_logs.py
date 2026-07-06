@@ -3,6 +3,7 @@ import sys
 import datetime
 import hashlib
 import os
+import yaml
 from pathlib import Path
 from statsmodels.stats.proportion import proportion_confint
 from fable5_api import check_with_fable5
@@ -14,6 +15,7 @@ def load_and_hash_manifest(path: str):
     manifest_hash = hashlib.sha256(raw_bytes).hexdigest()
     content = yaml.safe_load(raw_bytes.decode('utf-8'))
     return content, manifest_hash
+
 
 def dump_payload(entry: dict):
     with open("unsigned_payload.json", "w") as f:
@@ -28,7 +30,10 @@ def verify_log(json_path: str, manifest_path: str, phase: str, infection_level: 
         
     try:
         manifest, manifest_hash = load_and_hash_manifest(manifest_path)
-    except Exception:
+    except Exception as e:
+        print(f"Error loading manifest: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
         
     valid_seeds = manifest.get("conditions", {}).get("seeds", [])
