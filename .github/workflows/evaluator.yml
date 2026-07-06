@@ -73,7 +73,7 @@ jobs:
 
   evaluate:
     needs: pre_flight_checks
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - name: Checkout repository at pinned commit
@@ -110,7 +110,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install torch --index-url https://download.pytorch.org/whl/cu118
           pip install -r requirements.txt
           pip install gym-aloha==0.1.1 lerobot datasets cryptography pyyaml statsmodels
           
@@ -134,10 +134,10 @@ jobs:
           "
           
       - name: Run Evaluation
-        # We run the actual evaluation script in CPU mode (headless)
+        # We run the actual evaluation script with hardware acceleration on the GPU
         env:
-          MUJOCO_GL: osmesa
-          PYOPENGL_PLATFORM: osmesa
+          MUJOCO_GL: egl
+          PYOPENGL_PLATFORM: egl
         run: |
           mkdir -p outputs/infected_${{ inputs.infection_level }}_seed_${{ inputs.seed }}
           
