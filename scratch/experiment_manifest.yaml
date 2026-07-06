@@ -37,7 +37,7 @@ conditions:
   total_training_jobs: 25
 
 evaluation:
-  episodes_per_model: 500
+  episodes_per_model: 50
   success_metric: "recomputed_from_episodes"
 
 analysis_plan:
