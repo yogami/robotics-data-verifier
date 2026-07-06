@@ -122,7 +122,7 @@ def run_ssh_training(infection, seed):
         f"\"rm -rf /root/robotics-data-verifier && mkdir -p /root/outputs && "
         f"git clone https://{GITHUB_PAT}@github.com/{REPO_OWNER}/{REPO_NAME}.git /root/robotics-data-verifier && "
         f"cd /root/robotics-data-verifier && git checkout -q {commit_sha} && "
-        f"pip install --no-cache-dir pandas pyarrow huggingface-hub pyyaml && "
+        f"pip install --break-system-packages --no-cache-dir pandas pyarrow huggingface-hub pyyaml && "
         f"cat /proc/1/environ | tr '\\\\0' '\\\\n' | grep '^HF_TOKEN=' >> /etc/environment || true\""
     )
     run_cmd_with_retry(cmd_clone, check=True)
@@ -144,7 +144,7 @@ def run_ssh_training(infection, seed):
     
     cmd_train = (
         f"{ssh_prefix} "
-        f"\"nohup bash -c 'export \\$(cat /etc/environment | xargs) && mkdir -p /workspace/tmp && export TMPDIR=/workspace/tmp && pip cache purge && pip install --no-cache-dir \\\"lerobot[aloha,dataset,training]\\\" && pip install pyarrow pandas datasets huggingface_hub && python3 /root/robotics-data-verifier/train_act.py "
+        f"\"nohup bash -c 'export \\$(cat /etc/environment | xargs) && mkdir -p /workspace/tmp && export TMPDIR=/workspace/tmp && pip cache purge && pip install --break-system-packages --no-cache-dir \\\"lerobot[aloha,dataset,training]\\\" && pip install --break-system-packages pyarrow pandas datasets huggingface_hub && python3 /root/robotics-data-verifier/train_act.py "
         f"--parquet {parquet_path} --output-model {model_output} --output-eval {eval_output} "
         f"--epochs 100 --hf-repo {HF_REPO} --hf-token \\$HF_TOKEN --hf-branch {branch_name} "
         f"--seed {seed} --infection-level {infection}' "
