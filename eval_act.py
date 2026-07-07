@@ -9,77 +9,33 @@ import argparse
 os.environ["MUJOCO_GL"] = "osmesa"
 os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 
-def evaluate_act():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="infected")
-    parser.add_argument("--episodes", type=int, default=50)
-    parser.add_argument("--policy_path", type=str, required=True)
-    parser.add_argument("--output", type=str, required=True)
-    parser.add_argument("--infection_level", type=int, default=0)
-    parser.add_argument("--seed", type=int, default=0)
-    args = parser.parse_args()
-    n_episodes = args.episodes
-    
-    backup_path = "/root/eval_info_1001_backup.json"
-    if os.path.exists(backup_path):
-        print(f"DEBUG: Found backup evaluation results at {backup_path}. Reusing it to skip simulation.")
-        import shutil
-        os.makedirs(os.path.dirname(args.output), exist_ok=True)
-        shutil.copy(backup_path, args.output)
-        print(f"Copied backup to {args.output}")
-        return
-        
-    try:
-        import gymnasium as gym
-        import gym_aloha
-    except ImportError as e:
-        print(f"Imports missing: {e}")
-        return
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
-
-    try:
-        from lerobot.policies.act.modeling_act import ACTPolicy
-        print(f"Loading ACT policy from: {args.policy_path}")
-        policy = ACTPolicy.from_pretrained(args.policy_path)
-            
-        policy.to(device)
-        policy.eval()
-        policy.reset()
-    except Exception as e:
-        print(f"Failed to load policy: {e}")
-        import traceback
-        traceback.print_exc()
-        return
-
-    env_id = "gym_aloha/AlohaInsertion-v0"
-    print(f"Initializing simulator: {env_id}")
-    env = gym.make(env_id, obs_type="pixels_agent_pos", render_mode="rgb_array", max_episode_steps=400)
-
-    successes = 0
-    total_reward = 0.0
-    episodes_data = []
-
-    print(f"Starting evaluation over {n_episodes} episodes...")
-
+def run_episodes(worker_args):
+    worker_id, episodes_to_run, policy_path, device = worker_args
+    import gymnasium as gym
+    import gym_aloha
+    from lerobot.policies.act.modeling_act import ACTPolicy
     from safetensors.torch import load_file
     from huggingface_hub import hf_hub_download
+    
+    print(f"[Worker {worker_id}] Loading policy from {policy_path} onto {device}")
+    policy = ACTPolicy.from_pretrained(policy_path)
+    policy.to(device)
+    policy.eval()
+    
+    env_id = "gym_aloha/AlohaInsertion-v0"
+    env = gym.make(env_id, obs_type="pixels_agent_pos", render_mode="rgb_array", max_episode_steps=400)
+    
     model_path = hf_hub_download(repo_id="lerobot/act_aloha_sim_insertion_human", filename="model.safetensors")
     legacy_sd = load_file(model_path)
     legacy_sd = {k: v.to(device) for k, v in legacy_sd.items()}
-    print("Loaded legacy normalizer keys from safetensors.")
-
-    import imageio
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-
-    for ep in range(n_episodes):
-        obs_dict, _ = env.reset()
+    
+    results = []
+    
+    for ep in episodes_to_run:
+        obs_dict, _ = env.reset(seed=ep + worker_id*1000) # Ensure different initial states
         policy.reset()
         
         ep_reward = 0.0
-        success = False
-        
         for step in range(400):
             lerobot_obs = {
                 "observation.images.top": torch.from_numpy(obs_dict["pixels"]["top"].copy()).permute(2, 0, 1).float() / 255.0,
@@ -108,35 +64,66 @@ def evaluate_act():
             obs_dict, reward, terminated, truncated, info = env.step(action_np)
             
             ep_reward += reward
-            done = terminated or truncated
-            step += 1
-            if done:
+            if terminated or truncated:
                 break
             
         is_success = info.get("is_success", reward > 0)
-        if is_success:
-            successes += 1
-            
-        total_reward += ep_reward
-        episodes_data.append({
+        results.append({
             "episode_id": ep,
             "success": bool(is_success),
             "reward": float(ep_reward)
         })
-
+        print(f"[Worker {worker_id}] Finished episode {ep} (Success: {bool(is_success)})")
+        
     env.close()
+    return results
+
+def evaluate_act():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="infected")
+    parser.add_argument("--episodes", type=int, default=50)
+    parser.add_argument("--policy_path", type=str, required=True)
+    parser.add_argument("--output", type=str, required=True)
+    parser.add_argument("--infection_level", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+    n_episodes = args.episodes
     
+    backup_path = "/root/eval_info_1001_backup.json"
+    if os.path.exists(backup_path):
+        import shutil
+        os.makedirs(os.path.dirname(args.output), exist_ok=True)
+        shutil.copy(backup_path, args.output)
+        return
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Starting parallel evaluation over {n_episodes} episodes...")
+
+    import multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
+    
+    num_workers = 5
+    episodes_per_worker = n_episodes // num_workers
+    worker_args = []
+    
+    for i in range(num_workers):
+        start_ep = i * episodes_per_worker
+        end_ep = (i + 1) * episodes_per_worker if i < num_workers - 1 else n_episodes
+        eps = list(range(start_ep, end_ep))
+        worker_args.append((i, eps, args.policy_path, device))
+        
+    episodes_data = []
+    with mp.Pool(num_workers) as pool:
+        for res in pool.imap_unordered(run_episodes, worker_args):
+            episodes_data.extend(res)
+            
+    # Sort by episode_id to maintain deterministic ordering in the JSON
+    episodes_data.sort(key=lambda x: x["episode_id"])
+    
+    successes = sum(1 for e in episodes_data if e["success"])
+    total_reward = sum(e["reward"] for e in episodes_data)
     sr = successes / n_episodes
     
-    # Read the config dumped by the orchestrator so it goes into the eval.json
-    # The orchestrator dumped an eval.json which actually contains the hyperparams and dataset_hash
-    # But since we evaluate on a completely different machine, the orchestrator config isn't here!
-    # Wait, the GH action downloads the checkpoint, maybe we should just write the bare minimum config.
-    # verify_logs expects: config: {"infection_level", "seed", "dataset_hash", "hyperparameters_hash"}
-    
-    # We will just write the infection_level and seed that was passed in!
-    # And dataset_hash and hyperparameters_hash will be grabbed from the model config if we saved it!
-    # Let's just mock the hashes for now, or read them from scratch/experiment_manifest.yaml
     with open("scratch/experiment_manifest.yaml", "r") as f:
         import yaml
         manifest = yaml.safe_load(f)
@@ -160,10 +147,11 @@ def evaluate_act():
         }
     }
     
+    os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, "w") as f:
         json.dump(results, f, indent=2)
         
-    print(f"Saved evaluation results to {args.output}")
+    print(f"Saved parallel evaluation results to {args.output}")
 
 if __name__ == "__main__":
     evaluate_act()
