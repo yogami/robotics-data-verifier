@@ -127,6 +127,17 @@ class ArchitectureAwareDriftGate:
         drift_vec_l = l_l_pos - f_l_pos
         drift_vec_r = l_r_pos - f_r_pos
 
+        R_rel_l = np.matmul(l_l_R.transpose(0, 2, 1), f_l_R)
+        R_rel_r = np.matmul(l_r_R.transpose(0, 2, 1), f_r_R)
+
+        v_l = np.stack([R_rel_l[...,2,1]-R_rel_l[...,1,2], R_rel_l[...,0,2]-R_rel_l[...,2,0], R_rel_l[...,1,0]-R_rel_l[...,0,1]], -1)
+        theta_rad_l = np.arctan2(np.linalg.norm(v_l, axis=-1), np.trace(R_rel_l, axis1=-2, axis2=-1) - 1.0)
+
+        v_r = np.stack([R_rel_r[...,2,1]-R_rel_r[...,1,2], R_rel_r[...,0,2]-R_rel_r[...,2,0], R_rel_r[...,1,0]-R_rel_r[...,0,1]], -1)
+        theta_rad_r = np.arctan2(np.linalg.norm(v_r, axis=-1), np.trace(R_rel_r, axis1=-2, axis2=-1) - 1.0)
+
+        rot_drifts = np.degrees(np.maximum(theta_rad_l, theta_rad_r))
+
         return drift_vec_l, drift_vec_r, rot_drifts
 
     def compute_leader_follower_drift(self, leader_pos, follower_pos, dt):
@@ -479,6 +490,7 @@ class ArchitectureAwareDriftGate:
 
         if len(tcp_drifts) >= 10:
             mean_tcp = np.mean(tcp_drifts) * 1000
+            std_tcp = np.std(tcp_drifts) * 1000
             
             # Temporal consistency must be tested on the vector components, NOT the scalar magnitude.
             # A scalar magnitude is strictly positive, so its mean will trivially be > 0 (false positive bias).
@@ -500,7 +512,7 @@ class ArchitectureAwareDriftGate:
             temporal_consistency = max(tc_l, tc_r)
             mean_rot = np.mean(rot_drifts)
         else:
-            mean_tcp, mean_rot, temporal_consistency = 0.0, 0.0, 0.0
+            mean_tcp, std_tcp, mean_rot, temporal_consistency = 0.0, 0.0, 0.0, 0.0
 
         reversal_rate = self.compute_direction_reversal_rate(actions)
 
@@ -520,4 +532,62 @@ class ArchitectureAwareDriftGate:
         }
 
         return self._apply_calibration(ep_dict)
+
+    def analyze_real_parquet(self, filepath):
+        """
+        V3.6 Triple-Gate Audit on real Hugging Face Parquet data.
+        Determines calibration failures based on Cartesian TCP space drift.
+        """
+        print(f"Analyzing real Hugging Face Parquet dataset: {filepath}")
+        df = pd.read_parquet(filepath)
+
+        unique_episodes = sorted(df["episode_index"].unique())
+        episodes_to_analyze = unique_episodes
+
+        episode_data = []
+        for ep_idx in episodes_to_analyze:
+            ep_data = df[df["episode_index"] == ep_idx]
+            states = np.vstack(ep_data["observation.state"].values)
+            actions = np.vstack(ep_data["action"].values)
+            if "timestamp" in ep_data.columns:
+                timestamps = ep_data["timestamp"].values
+            else:
+                timestamps = None
+                
+            ep_dict = self._score_episode(ep_idx, actions, states, timestamps)
+            episode_data.append(ep_dict)
+
+        final_data = self._finalize_episodes(episode_data)
+        
+        failed_episodes = []
+        for ep in final_data:
+            if ep.get("drift_flagged"):
+                failed_episodes.append({
+                    "episode": f"episode_{ep['episode_idx']}",
+                    "error_type": "CARTESIAN_DRIFT",
+                    "severity": "CRITICAL",
+                    "metric": f"{ep['tcp_drift_mm']:.1f}mm / {ep['rot_drift']:.1f}°",
+                    "reason": f"Cartesian space calibration failure. TCP Z-score exceeds relative criteria and TCP>40mm with consistency>2.0."
+                })
+            elif ep.get("reversal_flagged"):
+                failed_episodes.append({
+                    "episode": f"episode_{ep['episode_idx']}",
+                    "error_type": "DIFFUSION_STALL_HESITATION",
+                    "severity": "HIGH",
+                    "metric": f"{ep['reversal_rate']:.1f} reversals/100 frames",
+                    "reason": f"High-frequency micro-reversals detected ({ep['reversal_rate']:.1f}/100 frames). Operator hesitation."
+                })
+
+        slack_status = "NOT_TRIGGERED"
+        if failed_episodes and self.slack_webhook:
+            slack_status = self.send_slack_alert(f"Found {len(failed_episodes)} out-of-calibration episodes in {filepath}.")
+            
+        return {
+            "status": "FAIL" if failed_episodes else "PASS",
+            "total_episodes_analyzed": len(final_data),
+            "failed_episodes_count": len(failed_episodes),
+            "failed_episodes": failed_episodes,
+            "slack_alert_status": slack_status,
+            "message": "Architecture-Aware Drift Gate completed."
+        }
 
