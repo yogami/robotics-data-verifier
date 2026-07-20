@@ -29,8 +29,8 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/branches/main/protection)
           
           if [ "$HTTP_STATUS" != "200" ]; then
-            echo "Warning: Branch protection on main could not be verified (HTTP $HTTP_STATUS). Skipping check."
-            exit 0
+            echo "CRITICAL ERROR: Branch protection on main is not active or cannot be verified! (HTTP $HTTP_STATUS)"
+            exit 1
           fi
           echo "Branch protection verified active."
 
